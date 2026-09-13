@@ -50,3 +50,24 @@ user's own network.
   delete `db/zta.db` and let `create_all()` rebuild (loses rows + reseeds admin).
 - Testing: nmap is NOT installed; the scan simulation uses a Python socket
   port-probe sweep, which the detector catches the same way.
+
+## Phase 3 (adaptive per-device baseline)
+
+- `DeviceBaseline` (one row/device) holds Welford online mean/m2 for
+  packet_count, byte_count, unique_flow_count, dns_query_count — O(1) memory,
+  no raw history. Learn period = 20 windows (~10 min, `baseline/config.py`).
+- Scoring is **z-score vs the device's own baseline** (`policy/scoring.py`):
+  during learning → (5, {"status": "learning"}), non-punitive. Post-learning a
+  window's deviation in std devs drives the score; z >= 3.5 contributes full
+  weight per feature.
+- **P3 beats P2 (verified):** a legitimately heavy device (streaming-like)
+  scores P3 32/LOW vs P2 43/MEDIUM (P2 false-positived); an anomalous jump on a
+  light device scores P3 98/HIGH vs P2 43/MEDIUM.
+- Gotcha: a new `DeviceBaseline(...)` object has `None` for defaulted columns
+  (SQLAlchemy defaults apply at INSERT) — `update_baseline` initializes them
+  explicitly, else the first Welford update crashes on `None + 1`.
+- **Known limitation (document for report):** the baseline updates every
+  window, *including anomalous ones*, so a slow sustained attack can gradually
+  "train itself in" ("boiling frog"). Future work: freeze baseline updates
+  during HIGH-risk windows / use a trimmed or exponentially-weighted estimate.
+- Schema changed again (device_baseline table) → delete `db/zta.db` to rebuild.
