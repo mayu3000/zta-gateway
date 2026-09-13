@@ -71,3 +71,47 @@ user's own network.
   "train itself in" ("boiling frog"). Future work: freeze baseline updates
   during HIGH-risk windows / use a trimmed or exponentially-weighted estimate.
 - Schema changed again (device_baseline table) → delete `db/zta.db` to rebuild.
+
+## Phase 4 (composite risk engine)
+
+- `Device` carries four sub-scores + composite: `identity_risk`, `device_risk`,
+  `network_risk`, `behavior_risk`, `total_risk` (= weighted sum of the four),
+  plus `flagged_domains` (csv) and `fan_out` (unique flows). Dashboard table is
+  the Fig.5 layout: Identity | Device | Network | Behavior | Total | Level |
+  Flagged Domains | Fan-out | Baseline, colored salmon/khaki/lightgreen by level.
+- Weights: identity .20, device .20, network .25, behavior .35
+  (`app/policy/composite.py`).
+- **Identity** (`policy/identity_risk.py`): count of `AuthEvent` Failed rows for
+  the device's IP in the last 15 min × 15, capped 100. Login route records every
+  attempt from `request.remote_addr` (a real wrong-password burst → 75).
+- **Device** (`policy/device_risk.py`): unknown=60, banned=100, approved+age<24h
+  =30, approved+older=0. Router row marked approved in the DB to demo.
+- **Network** (`policy/network_risk.py`): blocklist = `app/policy/blocklist.txt`
+  (StevenBlack hosts, gitignored) with a small `_BUILTIN` seed if the file is
+  absent; parent-domain suffix matching (block `doubleclick.net` matches
+  `x.doubleclick.net`). Suspicious ports {23,445,3389,6667} add 20.
+  Scored `min(flagged*40,80) + min(port_hits*20,20)`.
+- **Behavior** = Phase 3 z-score engine, now keyed per-feature weights
+  {flow 40, packet 20, byte 20, dns 20} — see Phase 3 section.
+- **Live verification (all 4 dimensions, uncommitted-at-write-time):**
+  - Identity: 8 real failed logins + 5 injected → laptop I=75.
+  - Device: unknown devices=60, router (approved)=30.
+  - Network: MUST force an **uncached** blocklisted query or the OS DNS cache
+    serves it with no packet → sniffer never sees it. Random subdomain
+    `probe-<rand>.doubleclick.net` (NXDOMAIN) got captured → N=80, flags
+    `['ncc.avast.com.', 'probe-….doubleclick.net.']`. Avast AV telemetry
+    (ncc.avast.com) is a live noise source — it flags every window it appears.
+  - Behavior: locked at 5 until baseline LEARNED (20 samples ≈ 10 min). After
+    learning, a 300-port sweep → fan_out 15→144, B spiked 18→37 (single window)
+    → settled 27; total went LOW→MEDIUM. Sweep may straddle a window boundary
+    (300 ports × 0.1s timeout ≈ 30s) — peak coupling to the sweep is capture-timing
+    dependent; the previous window's leftovers also feed the next scoring run.
+- **Learning-period gotcha:** during learning behavior contributes only 5, so a
+  device mid-baseline can look LOW even under attack (by design, non-punitive).
+  Once total composes four live dimensions, MEDIUM at idle is normal when
+  identity is elevated (75×.2 + 60×.2 + 35×.25 → ≈ 36).
+- Blocklist is regenerable: `curl
+  https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts` drops it
+  in `app/policy/blocklist.txt` (parse the `0.0.0.0` lines). Gitignored.
+- Schema changed again (four risk cols + flagged_domains + fan_out + auth_event
+  table) → delete `db/zta.db` to rebuild.

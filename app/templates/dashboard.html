@@ -8,22 +8,34 @@
 <body>
 <h1>Connected Devices</h1>
 <table border="1">
-  <tr><th>MAC</th><th>IP</th><th>Risk Score</th><th>Level</th><th>Baseline</th><th>Last Seen</th></tr>
+  <tr>
+    <th>User</th><th>Device</th><th>MAC</th>
+    <th>Identity</th><th>Device</th><th>Network</th><th>Behavior</th>
+    <th>Total</th><th>Level</th><th>Flagged Domains</th><th>Fan-out</th><th>Baseline</th>
+  </tr>
   {% for d in devices %}
   <tr style="background-color:
       {{ 'salmon' if d.risk_level == 'HIGH' else ('khaki' if d.risk_level == 'MEDIUM' else 'lightgreen') }}">
-    <td>{{ d.mac }}</td><td>{{ d.ip }}</td>
-    <td>{{ d.risk_score }}</td><td>{{ d.risk_level }}</td>
+    <td>{{ d.user or '-' }}</td>
+    <td>{{ d.hostname or '-' }}</td>
+    <td>{{ d.mac }}</td>
+    <td>{{ d.identity_risk }}</td>
+    <td>{{ d.device_risk }}</td>
+    <td>{{ d.network_risk }}</td>
+    <td>{{ d.behavior_risk }}</td>
+    <td><b>{{ d.total_risk }}</b></td>
+    <td>{{ d.risk_level }}</td>
+    <td>{{ d.flagged_domains or '-' }}</td>
+    <td>{{ d.fan_out }}</td>
     <td>
       {% if d.baseline and d.baseline.learning_complete %}
-        Learned ({{ d.baseline.sample_count }} samples)
+        Learned ({{ d.baseline.sample_count }})
       {% elif d.baseline %}
         Learning ({{ d.baseline.sample_count }}/20)
       {% else %}
         No data yet
       {% endif %}
     </td>
-    <td>{{ d.last_seen }}</td>
   </tr>
   {% endfor %}
 </table>

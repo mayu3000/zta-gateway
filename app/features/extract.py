@@ -26,6 +26,7 @@ def extract_features(window_seconds=WINDOW_SECONDS):
         "unique_dst_ips": set(),
         "unique_flows": set(),   # (dst_ip, dst_port) — the scan/C2 fan-out signal
         "dns_queries": set(),
+        "dst_ports": set(),      # all observed dst ports (for network risk)
         "tcp_count": 0,
         "udp_count": 0,
     })
@@ -40,6 +41,7 @@ def extract_features(window_seconds=WINDOW_SECONDS):
         d["unique_dst_ips"].add(p["dst_ip"])
         if p["dst_port"] is not None:
             d["unique_flows"].add((p["dst_ip"], p["dst_port"]))
+            d["dst_ports"].add(p["dst_port"])
         if p["dns_query"]:
             d["dns_queries"].add(p["dns_query"])
         if p["proto"] == 6:
@@ -57,5 +59,8 @@ def extract_features(window_seconds=WINDOW_SECONDS):
             "unique_flow_count": len(d["unique_flows"]),
             "dns_query_count": len(d["dns_queries"]),
             "tcp_ratio": d["tcp_count"] / max(d["packet_count"], 1),
+            # raw sets for network risk (flagged domains / suspicious ports)
+            "dns_queries": d["dns_queries"],
+            "dst_ports": d["dst_ports"],
         }
     return result

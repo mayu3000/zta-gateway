@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 db/*.db
 .env
+# downloaded open-source domain blocklist (regenerated locally)
+app/policy/blocklist.txt

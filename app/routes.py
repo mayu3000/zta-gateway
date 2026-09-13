@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, session, url_for
 from werkzeug.security import check_password_hash
-from .models import User, Device
+from .models import User, Device, AuthEvent, db
 from .sync_devices import sync_devices
 
 main = Blueprint("main", __name__)
@@ -9,7 +9,15 @@ main = Blueprint("main", __name__)
 def login():
     if request.method == "POST":
         user = User.query.filter_by(username=request.form["username"]).first()
-        if user and check_password_hash(user.password_hash, request.form["password"]):
+        success = bool(user) and check_password_hash(
+            user.password_hash, request.form["password"])
+        db.session.add(AuthEvent(
+            username=request.form["username"],
+            ip=request.remote_addr,
+            result="Success" if success else "Failed",
+        ))
+        db.session.commit()
+        if success:
             session["user"] = user.username
             return redirect(url_for("main.dashboard"))
         return "Invalid credentials", 401

@@ -10,15 +10,34 @@ class User(db.Model):
     password_hash = db.Column(db.String(200), nullable=False)
 
 
+class AuthEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80))
+    ip = db.Column(db.String(20))
+    result = db.Column(db.String(10))   # "Success" / "Failed"
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class Device(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     mac = db.Column(db.String(20), unique=True, nullable=False)
     ip = db.Column(db.String(20))
     hostname = db.Column(db.String(120))
+    user = db.Column(db.String(80))     # identity mapped to this device (usually unresolved)
     first_seen = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), default="unknown")  # unknown/approved/banned
-    risk_score = db.Column(db.Integer, default=0)          # 0-100
+
+    # Phase 4 composite risk sub-scores (0-100)
+    identity_risk = db.Column(db.Integer, default=0)
+    device_risk = db.Column(db.Integer, default=0)
+    network_risk = db.Column(db.Integer, default=0)
+    behavior_risk = db.Column(db.Integer, default=0)
+    total_risk = db.Column(db.Integer, default=0)
+    flagged_domains = db.Column(db.String(500), default="")   # comma-joined
+    fan_out = db.Column(db.Integer, default=0)
+
+    risk_score = db.Column(db.Integer, default=0)          # legacy alias of total_risk
     risk_level = db.Column(db.String(10), default="LOW")   # LOW/MEDIUM/HIGH
 
     baseline = db.relationship(
