@@ -1,9 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="30">
+  <title>ZTA Gateway — Devices</title>
+</head>
+<body>
 <h1>Connected Devices</h1>
 <table border="1">
-  <tr><th>MAC</th><th>IP</th><th>Status</th><th>Last Seen</th></tr>
+  <tr><th>MAC</th><th>IP</th><th>Risk Score</th><th>Level</th><th>Last Seen</th></tr>
   {% for d in devices %}
-  <tr>
-    <td>{{ d.mac }}</td><td>{{ d.ip }}</td><td>{{ d.status }}</td><td>{{ d.last_seen }}</td>
+  <tr style="background-color:
+      {{ 'salmon' if d.risk_level == 'HIGH' else ('khaki' if d.risk_level == 'MEDIUM' else 'lightgreen') }}">
+    <td>{{ d.mac }}</td><td>{{ d.ip }}</td>
+    <td>{{ d.risk_score }}</td><td>{{ d.risk_level }}</td>
+    <td>{{ d.last_seen }}</td>
   </tr>
   {% endfor %}
 </table>
+</body>
+</html>

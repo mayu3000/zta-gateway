@@ -16,3 +16,5 @@ class Device(db.Model):
     first_seen = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), default="unknown")  # unknown/approved/banned
+    risk_score = db.Column(db.Integer, default=0)          # 0-100
+    risk_level = db.Column(db.String(10), default="LOW")   # LOW/MEDIUM/HIGH

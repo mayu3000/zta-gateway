@@ -7,22 +7,17 @@ directed broadcast ping to wake ARP resolution, then read the system ARP
 cache (`arp -a`). This is the same idea arp-scan implements, minus raw sockets.
 """
 import ipaddress
-import re
 import subprocess
 
-# MAC in arp -a output uses dashes, e.g. 44-95-3b-e5-29-f0 -> 44:95:3b:e5:29:f0
-_ARP_LINE = re.compile(
-    rb"(\d{1,3}(?:\.\d{1,3}){3})\s+([0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5})",
-    re.ASCII,
-)
-_MAC_DASH = re.compile(r"-")
+from app.capture.resolve import local_ip_macs, parse_arp_table
 
 
 def scan_network(ip_range="192.168.1.0/24"):
     """Return a list of {ip, mac} for hosts answering on the subnet.
 
     Sends a couple of directed-broadcast ICMP pings so live hosts resolve
-    themselves in the OS ARP cache, then parses ``arp -a`` for this subnet.
+    themselves in the OS ARP cache, then parses ``arp -a`` for this subnet
+    (shared parser: app/capture/resolve.py).
     """
     net = ipaddress.ip_network(ip_range, strict=False)
     broadcast = str(net.broadcast_address)
@@ -32,16 +27,16 @@ def scan_network(ip_range="192.168.1.0/24"):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
-    out = subprocess.run(["arp", "-a"], capture_output=True).stdout
     seen = set()
     devices = []
-    for m in _ARP_LINE.finditer(out):
-        ip = m.group(1).decode()
+    # arp -a omits this machine itself, so merge in own adapter rows too.
+    arp_entries = parse_arp_table()
+    arp_entries.update(local_ip_macs())
+    for ip, mac in arp_entries.items():
         if ipaddress.ip_address(ip) not in net:  # only the target subnet
             continue
-        if ip == str(net.broadcast_address):  # broadcast, not a host
+        if ip == broadcast:  # broadcast, not a host
             continue
-        mac = _MAC_DASH.sub(":", m.group(2).decode().lower())
         if mac in seen:
             continue
         seen.add(mac)

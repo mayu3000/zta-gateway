@@ -35,3 +35,18 @@ user's own network.
 - Devices with `status="unknown"` are auto-approved for Phase 1; risk scoring
   comes in Phase 2+. Keep Phase 1 minimal and working.
 - After any pip change, refresh `requirements.txt` (`pip freeze > requirements.txt`).
+
+## Phase 2 (traffic capture + risk scoring)
+
+- **Passive sniffing works** on this Npcap stack (unlike active ARP). Only the
+  machine's own traffic is visible; scoring attributes outbound src IPs →
+  Device MACs (with L2 src_mac fallback). Remote/inbound srcs are skipped.
+- `app/capture/sniffer.py` auto-picks the Wi-Fi iface; `filter="ip"` BPF set.
+- Scan signal = **unique_flow_count** (dst ip:port pairs). Tuned so browsing
+  ~LOW (~14) but a 500-port sweep → HIGH (82). Thresholds in
+  `app/baseline/thresholds.py`; weights in `app/policy/scoring.py`.
+- Scores use rolling 30s windows → decay naturally once activity stops.
+- Schema changed (risk_score/risk_level on Device). No migrations: to upgrade,
+  delete `db/zta.db` and let `create_all()` rebuild (loses rows + reseeds admin).
+- Testing: nmap is NOT installed; the scan simulation uses a Python socket
+  port-probe sweep, which the detector catches the same way.
