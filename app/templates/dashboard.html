@@ -1,0 +1,9 @@
+<h1>Connected Devices</h1>
+<table border="1">
+  <tr><th>MAC</th><th>IP</th><th>Status</th><th>Last Seen</th></tr>
+  {% for d in devices %}
+  <tr>
+    <td>{{ d.mac }}</td><td>{{ d.ip }}</td><td>{{ d.status }}</td><td>{{ d.last_seen }}</td>
+  </tr>
+  {% endfor %}
+</table>
