@@ -25,7 +25,8 @@ user's own network.
 - Default login: `admin` / `admin123`.
 - Live scan only: `./venv/bin/python app/discovery.py`
 - DB: SQLite at `db/zta.db` (relative URI `sqlite:///../db/zta.db` resolves
-  from the `app/` package dir up to `db/`).
+  from the `app/` package dir up to `db/`). Override via env `ZTA_DB` — the
+  test suites set it to `db/zta_test.db` so they never disturb the live DB.
 
 ## Operating notes for Claude
 
@@ -212,9 +213,21 @@ user's own network.
 ## Phase 8 (integration testing, documentation, final review)
 
 - **Test suite** (`tests/`): `test_phase6.py` (26 checks), `test_phase7.py`
-  (34 checks), `test_integration.py` (35 checks — the full 10-step E2E).
-  All run standalone with `./venv/bin/python tests/<file>.py`, deleting and
-  rebuilding `db/zta.db` on each run.
+  (34 checks), `test_integration.py` (35 checks — the full 10-step E2E) =
+  **95 checks total**.
+- **Standalone / re-runnable**: each suite sets `ZTA_DB` to a throwaway
+  `db/zta_test.db` (env override read by `create_app()`), deletes it, and
+  rebuilds — so the suites never touch the live server's `zta.db` (which a
+  soak-testing `run.py` holds open) and rerun cleanly back-to-back. Run them
+  **sequentially**, never in parallel — they share the same throwaway file.
+  Gotchas that bit during re-verification: phase6/phase7 originally did *not*
+  reset their DB, so a stale `alice`/portal device broke re-runs (duplicate
+  registration → `get_last_verification_url()` None → `sum(ok)` TypeError;
+  duplicate device seed → UNIQUE IntegrityError). Phase 6's traceback checks
+  depended on `Device.query.first()` so an empty DB skipped 2 checks (24 vs
+  26) — now it seeds its own device unconditionally, so it always reports 26.
+  Verified: each file exits 0 on its own; merge-check via
+  `tests/test_integration.py` perf block ≈ 65 ms / 68 KiB.
 - **Testability refactor** (`run.py`): the scoring-loop body moved into
   `run_scoring_window(app)` — the same function the daemon thread calls — so
   tests drive the *real* pipeline with synthetic per-window packet buffers

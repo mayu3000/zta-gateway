@@ -5,7 +5,16 @@ Run from anywhere:  ./venv/bin/python tests/test_phase6.py
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+
+# Throwaway DB — never the live server's zta.db (which a soak-testing run.py
+# may hold open), so this suite is self-contained and re-runnable. A stale
+# temp DB from an earlier run would otherwise fail duplicate-user (alice) checks.
+os.environ["ZTA_DB"] = "sqlite:///../db/zta_test.db"
+_db = os.path.join(_ROOT, "db", "zta_test.db")
+if os.path.exists(_db):
+    os.remove(_db)
 
 from app import create_app
 from app.models import db, User, AuthEvent, Ban, Device
@@ -123,16 +132,18 @@ body = r.get_data(as_text=True)
 ok.append(check("auth event row success class", 'class="success"' in body))
 ok.append(check("auth event row failed class", 'class="failed"' in body))
 
-# 13. Traceback page (needs a device row)
+# 13. Traceback page — seed a device deterministically so these two checks
+# always run (Device.query.first() on a leftover DB made the count 26, on an
+# empty DB it skipped to 24 — the reported total must not depend on ambient
+# DB state).
 with app.app_context():
-    dev = Device.query.first()
-if dev:
-    r = c.get(f"/admin/traceback/{dev.mac}")
-    ok.append(check("traceback page 200", r.status_code == 200))
-    ok.append(check("traceback nav bar",
-                    "Pending Users" in r.get_data(as_text=True)))
-else:
-    print("SKIP - traceback (no devices in DB)")
+    db.session.add(Device(mac="de:ad:be:ef:00:99", ip="192.168.1.99",
+                          hostname="trace-test", status="unknown"))
+    db.session.commit()
+r = c.get("/admin/traceback/de:ad:be:ef:00:99")
+ok.append(check("traceback page 200", r.status_code == 200))
+ok.append(check("traceback nav bar",
+                "Pending Users" in r.get_data(as_text=True)))
 
 print()
 print("TOTAL:", sum(ok), "/", len(ok), "passed")

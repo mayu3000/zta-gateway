@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from .models import db, User
 from werkzeug.security import generate_password_hash
@@ -5,7 +7,10 @@ from werkzeug.security import generate_password_hash
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = "change-this-later"
-    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///../db/zta.db"
+    # Tests set ZTA_DB to a throwaway database so they never collide with the
+    # live server's db/zta.db (which a soak-testing run.py may have open).
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+        "ZTA_DB", "sqlite:///../db/zta.db")
 
     db.init_app(app)
 

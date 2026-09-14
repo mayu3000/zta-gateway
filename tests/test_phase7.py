@@ -5,7 +5,18 @@ Run from anywhere:  ./venv/bin/python tests/test_phase7.py
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+
+# Throwaway DB — never the live server's zta.db (which a soak-testing run.py
+# may hold open), so this suite is self-contained and re-runnable. A stale
+# temp DB from an earlier run would otherwise fail duplicate alice / duplicate
+# portal device (aa:bb:cc:dd:ee:f2) AND leave get_last_verification_url()
+# returning None, which crashes sum(ok) below.
+os.environ["ZTA_DB"] = "sqlite:///../db/zta_test.db"
+_db = os.path.join(_ROOT, "db", "zta_test.db")
+if os.path.exists(_db):
+    os.remove(_db)
 
 from app import create_app
 from app.models import db, User, AuthEvent, Ban, Device, DNSLog, BandwidthLog

@@ -14,8 +14,10 @@ import time
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-# Fresh DB (schema is current; rebuild so the scenario starts clean).
-_db = os.path.join(_ROOT, "db", "zta.db")
+# Throwaway DB (schema is current; rebuild so the scenario starts clean).
+# Never the live server's zta.db — a soak-testing run.py may hold it open.
+os.environ["ZTA_DB"] = "sqlite:///../db/zta_test.db"
+_db = os.path.join(_ROOT, "db", "zta_test.db")
 if os.path.exists(_db):
     os.remove(_db)
 
