@@ -11,7 +11,7 @@
   <tr>
     <th>User</th><th>Device</th><th>MAC</th>
     <th>Identity</th><th>Device</th><th>Network</th><th>Behavior</th>
-    <th>Total</th><th>Level</th><th>Flagged Domains</th><th>Fan-out</th><th>Baseline</th>
+    <th>Total</th><th>Level</th><th>Status</th><th>Flagged Domains</th><th>Fan-out</th><th>Baseline</th><th>Traceback</th>
   </tr>
   {% for d in devices %}
   <tr style="background-color:
@@ -25,6 +25,7 @@
     <td>{{ d.behavior_risk }}</td>
     <td><b>{{ d.total_risk }}</b></td>
     <td>{{ d.risk_level }}</td>
+    <td>{{ d.status }}</td>
     <td>{{ d.flagged_domains or '-' }}</td>
     <td>{{ d.fan_out }}</td>
     <td>
@@ -36,7 +37,31 @@
         No data yet
       {% endif %}
     </td>
+    <td><a href="{{ url_for('main.traceback_view', mac=d.mac) }}">timeline</a></td>
   </tr>
+  {% endfor %}
+</table>
+
+<h2>Active Bans</h2>
+<table border="1">
+  <tr>
+    <th>MAC</th><th>Reason</th><th>Risk Score At Ban</th><th>Since</th><th>Action</th>
+  </tr>
+  {% for b in active_bans %}
+  <tr>
+    <td>{{ b.mac }}</td>
+    <td>{{ b.reason }}</td>
+    <td>{{ b.risk_score_at_ban }}</td>
+    <td>{{ b.since }}</td>
+    <td>
+      <form method="post" action="{{ url_for('main.unban', mac=b.mac) }}"
+            onsubmit="return confirm('Release this device from quarantine? It will return to unknown status and must re-earn trust.');">
+        <input type="submit" value="Unban">
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5">No active bans</td></tr>
   {% endfor %}
 </table>
 </body>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Threat Traceback — {{ data.mac }}</title>
+</head>
+<body>
+<h1>Threat Traceback — {{ data.mac }}</h1>
+<p><a href="{{ url_for('main.dashboard') }}">&laquo; Back to dashboard</a></p>
+
+<p><b>First anomaly (MEDIUM+) at:</b>
+  {{ data.first_seen_anomaly or 'none recorded' }}</p>
+<p><b>Final action:</b> {{ data.final_action }}</p>
+<p><b>Escalation path (composite risk per window):</b>
+  {% if data.escalation_path %}
+    {{ data.escalation_path | join(' → ') }}
+  {% else %}
+    -
+  {% endif %}
+</p>
+
+<h2>Timeline</h2>
+<table border="1">
+  <tr>
+    <th>Timestamp</th><th>Total</th><th>Identity</th><th>Device</th>
+    <th>Network</th><th>Behavior</th><th>Flagged Domains</th>
+  </tr>
+  {% for row in data.timeline %}
+  <tr>
+    <td>{{ row.timestamp }}</td>
+    <td><b>{{ row.total_risk }}</b></td>
+    <td>{{ row.identity }}</td>
+    <td>{{ row.device }}</td>
+    <td>{{ row.network }}</td>
+    <td>{{ row.behavior }}</td>
+    <td>{{ row.flagged_domains or '-' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7">No history available</td></tr>
+  {% endfor %}
+</table>
+</body>
+</html>

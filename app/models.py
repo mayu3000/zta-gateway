@@ -69,3 +69,27 @@ class DeviceBaseline(db.Model):
     dns_query_m2 = db.Column(db.Float, default=0.0)
 
     learning_complete = db.Column(db.Boolean, default=False)
+
+
+class Ban(db.Model):
+    """Active/past quarantines (Fig.6 "Active bans" table)."""
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20), db.ForeignKey("device.mac"))
+    reason = db.Column(db.String(200))
+    risk_score_at_ban = db.Column(db.Integer)
+    since = db.Column(db.DateTime, default=datetime.utcnow)
+    active = db.Column(db.Boolean, default=True)
+    unbanned_at = db.Column(db.DateTime, nullable=True)
+
+
+class RiskHistory(db.Model):
+    """One row per device per 30s scoring window — the traceback audit trail."""
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    identity_risk = db.Column(db.Integer)
+    device_risk = db.Column(db.Integer)
+    network_risk = db.Column(db.Integer)
+    behavior_risk = db.Column(db.Integer)
+    total_risk = db.Column(db.Integer)
+    flagged_domains = db.Column(db.String(500))

@@ -115,3 +115,29 @@ user's own network.
   in `app/policy/blocklist.txt` (parse the `0.0.0.0` lines). Gitignored.
 - Schema changed again (four risk cols + flagged_domains + fan_out + auth_event
   table) → delete `db/zta.db` to rebuild.
+
+## Phase 5 (enforcement: quarantine/block + threat traceback)
+
+- **Ban tracking** (`app/models.py`): `Ban` (mac, reason, risk_score_at_ban,
+  since, active, unbanned_at) powers the Fig.6 "Active Bans" table; `RiskHistory`
+  (one row/device/30s window of the four sub-scores + total + flagged domains)
+  is the traceback audit trail.
+- **ARP quarantine** (`app/enforcement/quarantine.py`): Option B — a daemon
+  thread spoofs ARP replies (gateway → bogus MAC) at the target every 2s to
+  cut it off from routing. Windows/MinGW active injection is unreliable, so
+  `INJECTION_AVAILABLE` is False here: quarantine is still recorded (DB Ban +
+  forensic log + status=banned), spoofing is skipped, and the log says which
+  mode ran. True wire isolation is demoable on a Linux VM.
+- **Scoring loop** (`run.py`): `HIGH_RISK_BAN_THRESHOLD = 70`. Each window
+  writes a `RiskHistory` row, logs risk-level transitions (LOW→MEDIUM, …), and
+  on first cross of 70 inserts a `Ban` + sets `device.status='banned'`.
+- **Unban** (`app/routes.py` POST `/admin/unban/<mac>`): zero-trust reset —
+  does NOT restore approval, sets status back to `unknown` so the device
+  re-earns trust. Logs `UNBAN`.
+- **Traceback** (`app/traceback/tracer.py` + `/admin/traceback/<mac>`):
+  timeline of RiskHistory rows, `first_seen_anomaly` (first total≥35),
+  `escalation_path` (totals in order), `final_action` (latest ban).
+- **Forensic log** (`app/logging/forensic.py`): JSON lines → `logs/forensic.log`
+  at QUARANTINE / UNBAN / RISK_TRANSITION / STATUS_CHANGE. Independent of DB.
+- Schema changed again (ban + risk_history tables) → delete `db/zta.db` to
+  rebuild.
