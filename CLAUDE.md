@@ -208,3 +208,34 @@ user's own network.
 - Verified: 34-test smoke run — email verify flow (blocked → verify →
   allowed), admin-only 403s for non-admin, captive-portal redirect/whitelist,
   escalation multipliers, DNSLog + BandwidthLog writes.
+
+## Phase 8 (integration testing, documentation, final review)
+
+- **Test suite** (`tests/`): `test_phase6.py` (26 checks), `test_phase7.py`
+  (34 checks), `test_integration.py` (35 checks — the full 10-step E2E).
+  All run standalone with `./venv/bin/python tests/<file>.py`, deleting and
+  rebuilding `db/zta.db` on each run.
+- **Testability refactor** (`run.py`): the scoring-loop body moved into
+  `run_scoring_window(app)` — the same function the daemon thread calls — so
+  tests drive the *real* pipeline with synthetic per-window packet buffers
+  (`packet_queue`) instead of waiting on wall-clock 30s windows or real
+  traffic.
+- **Integration scenario** drives detection → baseline learning (20 windows)
+  → composite scoring → auto-ban (total 90 HIGH) → traceback → unban →
+  repeat attack (total 65) **banned at the escalated 0.75× threshold** —
+  directly proving escalation matters. An idle control device never left LOW.
+- **Performance evidence**: one scoring window (400-packet sweep, 2 devices,
+  all persistence) ≈ 69 ms; entire scenario ≈ 68 KiB SQLite. Welford keeps
+  zero raw history → O(1) memory per device.
+- **Black Book** (`docs/BLACKBOOK.md`): full report mapped to the Review-1
+  sections — problem statement, literature (Welford, StevenBlack, NIST
+  800-207, UEBA), system architecture (laptop not Pi; Option A/B), per-phase
+  implementation, integration + per-dimension test tables, adaptive-vs-fixed
+  results, honest limitations (boiling frog, DNS-cache blind spot, ARP
+  recorded-only on Windows, Wi-Fi AP passthrough), future scope, conclusion,
+  references.
+- **Optional SMTP** (real email delivery): `Flask-Mail` install was flaky on
+  this MinGW venv (`pip install flask-mail` → distribution not found);
+  `app/mail.py` detects it at import and falls back to console + forensic-log
+  delivery. Install `Flask-Mail` + set `MAIL_SERVER` to enable it.
+- Tagged `v1.0-final`.
