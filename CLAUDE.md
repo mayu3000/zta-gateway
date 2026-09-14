@@ -238,8 +238,9 @@ user's own network.
   repeat attack (total 65) **banned at the escalated 0.75× threshold** —
   directly proving escalation matters. An idle control device never left LOW.
 - **Performance evidence**: one scoring window (400-packet sweep, 2 devices,
-  all persistence) ≈ 69 ms; entire scenario ≈ 68 KiB SQLite. Welford keeps
-  zero raw history → O(1) memory per device.
+  all persistence) ≈ 65 ms (69 ms on another run — run-to-run jitter);
+  entire scenario (47 scoring windows, 141 DNS rows) ≈ 68 KiB SQLite.
+  Welford keeps zero raw history → O(1) memory per device.
 - **Black Book** (`docs/BLACKBOOK.md`): full report mapped to the Review-1
   sections — problem statement, literature (Welford, StevenBlack, NIST
   800-207, UEBA), system architecture (laptop not Pi; Option A/B), per-phase

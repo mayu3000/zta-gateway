@@ -178,11 +178,13 @@ back-to-back (verified: exit 0, each).
 
 - **Scoring latency:** a full window over a 400-packet port-sweep across 2
   devices, with all persistence (RiskHistory + DNSLog + BandwidthLog +
-  forensic log) completes in **~69 ms** on this laptop — negligible vs the
-  30s window, supporting the "lightweight" claim.
-- **Storage:** the entire integration scenario (24 windows, 2 devices, 141
-  DNS log rows) is **68 KiB** in SQLite — O(n) tables, no raw-packet history
-  (Welford keeps zero history by design).
+  forensic log) completes in **~65 ms** on this laptop (69 ms on an earlier
+  run — low single-digit jitter) — negligible vs the 30s window, supporting
+  the "lightweight" claim.
+- **Storage:** the entire integration scenario (**47 scoring windows across 2
+  devices, 141 DNS log rows**) is **68 KiB** in SQLite — O(n) tables, no
+  raw-packet history (Welford keeps zero history by design). Reproduced on
+  every run of `tests/test_integration.py`.
 - **Memory:** all long-running state is O(1) per device (Welford moments,
   per-device snapshots); no unbounded growth in normal operation.
 - **Uptime:** the server is designed to run unattended (daemon threads,
