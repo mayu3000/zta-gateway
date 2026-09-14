@@ -172,3 +172,39 @@ user's own network.
 - Schema changed again (new User columns) → delete `db/zta.db` to rebuild.
 - Verified: 26-test smoke run (register → pending → approve → login → tiles
   → bans → events) all passing.
+
+## Phase 7 (auth upgrade, captive portal, network risk extension)
+
+- **Email verification** (`app/mail.py`): `User.email_verified`,
+  `verification_token` (one-time). Registration generates a `secrets`
+  token and calls `send_verification_email(...)`.
+  - **LAB MODE delivery**: real SMTP (Flask-Mail) only when installed AND
+    `MAIL_SERVER` is configured. Otherwise the link is printed to the server
+    console and written to the forensic log (`EMAIL_VERIFY`) — the full
+    flow works without a live mail server. `get_last_verification_url()`
+    exposes the latest link for tests/demos.
+  - `/verify/<token>` sets `email_verified=True` and clears the token (use
+    once). Login now requires `email_verified` AND `status == "approved"`.
+  - Admin seed now also sets `email_verified=True`.
+- **Admin roles** (`app/routes.py`): `@admin_required` decorator on every
+  `/admin/*` route — any logged-in non-admin gets 403. Closes the Phase 6
+  gap where any user could hit pending/unban/traceback endpoints.
+- **Captive portal** (`app/middleware.py`): `before_request` hook gates
+  *known* unapproved devices (matched by `request.remote_addr` → Device.ip)
+  → redirect to `/login`. Whitelist: `/login /register /verify /logout
+  /admin /static`. Admins and unknown IPs pass through. True network-level
+  DNS-hijack captive portal documented as future work.
+- **DNS audit trail** (`DNSLog` model): every domain each device queries per
+  30s window is persisted, tagged `flagged` via
+  `network_risk.is_blocked_domain`. Powers a "Top domains" report:
+  `GROUP BY domain ORDER BY COUNT(*) DESC`.
+- **Bandwidth tracking** (`BandwidthLog` model): per-device byte totals per
+  window (daily/hourly rollups derivable).
+- **Escalation rules** (`app/enforcement/escalation.py`): prior bans 0→1.0,
+  1→0.75, 2+→0.5 multiplier on the ban threshold. `effective_ban_threshold(
+  base, mac)` in run.py; repeat offenders get quarantined at a lower score.
+- Schema changed again (User verify cols + dns_log + bandwidth_log tables) →
+  delete `db/zta.db` to rebuild.
+- Verified: 34-test smoke run — email verify flow (blocked → verify →
+  allowed), admin-only 403s for non-admin, captive-portal redirect/whitelist,
+  escalation multipliers, DNSLog + BandwidthLog writes.

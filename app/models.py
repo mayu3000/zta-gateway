@@ -13,6 +13,9 @@ class User(db.Model):
     status = db.Column(db.String(20), default="pending")  # pending/approved/rejected
     registered_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_admin = db.Column(db.Boolean, default=False)
+    # Phase 7: email verification (login also requires email_verified).
+    email_verified = db.Column(db.Boolean, default=False)
+    verification_token = db.Column(db.String(64), unique=True, nullable=True)
 
 
 class AuthEvent(db.Model):
@@ -98,3 +101,22 @@ class RiskHistory(db.Model):
     behavior_risk = db.Column(db.Integer)
     total_risk = db.Column(db.Integer)
     flagged_domains = db.Column(db.String(500))
+
+
+class DNSLog(db.Model):
+    """Phase 7: full DNS audit trail — every domain a device queries per window."""
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20))
+    domain = db.Column(db.String(255))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    flagged = db.Column(db.Boolean, default=False)
+
+
+class BandwidthLog(db.Model):
+    """Phase 7: per-device byte totals per 30s window (daily/hourly rollups
+    are derivable from this)."""
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20))
+    window_start = db.Column(db.DateTime, default=datetime.utcnow)
+    bytes_sent = db.Column(db.Integer, default=0)
+    bytes_received = db.Column(db.Integer, default=0)

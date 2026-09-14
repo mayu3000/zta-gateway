@@ -65,3 +65,8 @@ def compute_network_risk(dns_queries, dst_ports) -> tuple[int, list]:
 
     score = min(len(flagged) * 40, 80) + min(len(port_hits) * 20, 20)
     return min(score, 100), flagged
+
+
+def is_blocked_domain(domain: str) -> bool:
+    """Public accessor used by DNSLog persistence (Phase 7)."""
+    return _is_blocked(domain, BLOCKLIST)
