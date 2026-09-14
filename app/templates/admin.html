@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="10">
+  <title>ZTA Gateway — Admin Dashboard</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; background: #f5f6f8;
+           padding-bottom: 40px; }
+    nav { background: #2c3e50; padding: 12px 20px; }
+    nav a { color: #ecf0f1; margin-right: 18px; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    .badge { background: #e74c3c; color: #fff; border-radius: 10px;
+             padding: 1px 8px; font-size: .8em; margin-left: 4px; }
+    .wrap { max-width: 1200px; margin: 24px auto; padding: 0 20px; }
+
+    .tiles { display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+    .tile { flex: 1; min-width: 160px; border-radius: 8px; color: #fff;
+            padding: 18px 20px; box-shadow: 0 2px 5px rgba(0,0,0,.15); }
+    .tile .num { font-size: 2.2em; font-weight: 700; display: block; }
+    .tile .lbl { font-size: .85em; opacity: .95; }
+    a.tile-link { text-decoration: none; }
+    .t-blue { background: #2980b9; }
+    .t-red { background: #c0392b; }
+    .t-orange { background: #d68910; }
+    .t-yellow { background: #d4ac0d; }
+    .t-green { background: #27ae60; }
+
+    h2 { color: #2c3e50; border-bottom: 2px solid #2c3e50;
+         padding-bottom: 6px; margin-top: 34px; }
+    table { border-collapse: collapse; width: 100%; background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #eee;
+             font-size: .92em; }
+    th { background: #2c3e50; color: #fff; }
+    tr:nth-child(even) { background: #fafafa; }
+    tr.success { background: #d4edda !important; }
+    tr.failed { background: #f8d7da !important; }
+    button { padding: 5px 14px; border: none; border-radius: 4px;
+             color: #fff; cursor: pointer; }
+    button.unban { background: #e67e22; }
+    .empty { padding: 24px; text-align: center; color: #7f8c8d; }
+    a.dim { color: #7f8c8d; }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{{ url_for('main.admin_dashboard') }}">Dashboard</a>
+  <a href="{{ url_for('main.pending_users') }}">Pending Users
+    <span class="badge">{{ stats.pending_users }}</span></a>
+  <a href="{{ url_for('main.logout') }}">Logout</a>
+</nav>
+
+<div class="wrap">
+  <h1>ZTA Gateway — Live Dashboard</h1>
+  <p style="color:#7f8c8d; margin-top:-8px">Auto-refreshes every 10 seconds</p>
+
+  <div class="tiles">
+    <div class="tile t-blue">
+      <span class="num">{{ stats.total_devices }}</span>
+      <span class="lbl">Connected Devices</span>
+    </div>
+    <div class="tile t-red">
+      <span class="num">{{ stats.high_risk }}</span>
+      <span class="lbl">High Risk</span>
+    </div>
+    <div class="tile t-orange">
+      <span class="num">{{ stats.medium_risk }}</span>
+      <span class="lbl">Medium Risk</span>
+    </div>
+    <div class="tile t-red">
+      <span class="num">{{ stats.active_bans }}</span>
+      <span class="lbl">Active Bans</span>
+    </div>
+    <a class="tile-link" href="{{ url_for('main.pending_users') }}">
+      <div class="tile t-yellow">
+        <span class="num">{{ stats.pending_users }}</span>
+        <span class="lbl">Pending Approvals</span>
+      </div>
+    </a>
+  </div>
+
+  <h2>Connected Devices</h2>
+  <table>
+    <tr>
+      <th>User</th><th>Device</th><th>MAC</th>
+      <th>Identity</th><th>Device</th><th>Network</th><th>Behavior</th>
+      <th>Total</th><th>Level</th><th>Status</th><th>Flagged Domains</th>
+      <th>Fan-out</th><th>Baseline</th><th>Traceback</th>
+    </tr>
+    {% for d in devices %}
+    <tr style="background-color:
+        {{ 'salmon' if d.risk_level == 'HIGH' else ('khaki' if d.risk_level == 'MEDIUM' else 'lightgreen') }}">
+      <td>{{ d.user or '-' }}</td>
+      <td>{{ d.hostname or '-' }}</td>
+      <td>{{ d.mac }}</td>
+      <td>{{ d.identity_risk }}</td>
+      <td>{{ d.device_risk }}</td>
+      <td>{{ d.network_risk }}</td>
+      <td>{{ d.behavior_risk }}</td>
+      <td><b>{{ d.total_risk }}</b></td>
+      <td>{{ d.risk_level }}</td>
+      <td>{{ d.status }}</td>
+      <td>{{ d.flagged_domains or '-' }}</td>
+      <td>{{ d.fan_out }}</td>
+      <td>
+        {% if d.baseline and d.baseline.learning_complete %}
+          Learned ({{ d.baseline.sample_count }})
+        {% elif d.baseline %}
+          Learning ({{ d.baseline.sample_count }}/20)
+        {% else %}
+          No data yet
+        {% endif %}
+      </td>
+      <td><a href="{{ url_for('main.traceback_view', mac=d.mac) }}">timeline</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="14" class="empty">No devices discovered yet.</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Active Bans</h2>
+  <table>
+    <tr><th>MAC</th><th>Reason</th><th>Risk Score At Ban</th><th>Since</th><th>Action</th></tr>
+    {% for b in active_bans %}
+    <tr>
+      <td>{{ b.mac }}</td>
+      <td>{{ b.reason }}</td>
+      <td>{{ b.risk_score_at_ban }}</td>
+      <td>{{ b.since }}</td>
+      <td>
+        <form method="post" action="{{ url_for('main.unban', mac=b.mac) }}"
+              onsubmit="return confirm('Release this device from quarantine? It will return to unknown status and must re-earn trust.');">
+          <button type="submit" class="unban">Unban</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No active bans</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Recent Authentication Events</h2>
+  <table>
+    <tr><th>Timestamp</th><th>Username</th><th>IP</th><th>Result</th></tr>
+    {% for e in recent_events %}
+    <tr class="{{ 'success' if e.result == 'Success' else 'failed' }}">
+      <td>{{ e.timestamp }}</td>
+      <td>{{ e.username }}</td>
+      <td>{{ e.ip }}</td>
+      <td><b>{{ e.result }}</b></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">No authentication events yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ZTA Gateway — Pending User Approvals</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; background: #f5f6f8; }
+    nav { background: #2c3e50; padding: 12px 20px; }
+    nav a { color: #ecf0f1; margin-right: 18px; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    .badge { background: #e74c3c; color: #fff; border-radius: 10px;
+             padding: 1px 8px; font-size: .8em; margin-left: 4px; }
+    .wrap { max-width: 900px; margin: 24px auto; padding: 0 20px; }
+    table { border-collapse: collapse; width: 100%; background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #eee; }
+    th { background: #2c3e50; color: #fff; }
+    tr:nth-child(even) { background: #fafafa; }
+    button { padding: 5px 14px; border: none; border-radius: 4px;
+             color: #fff; cursor: pointer; margin-right: 6px; }
+    .approve { background: #27ae60; }
+    .reject { background: #c0392b; }
+    .empty { padding: 24px; text-align: center; color: #7f8c8d; }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{{ url_for('main.admin_dashboard') }}">Dashboard</a>
+  <a href="{{ url_for('main.pending_users') }}">Pending Users
+    <span class="badge">{{ pending | length }}</span></a>
+  <a href="{{ url_for('main.logout') }}">Logout</a>
+</nav>
+<div class="wrap">
+  <h1>Pending User Approvals</h1>
+  <table>
+    <tr><th>Username</th><th>Email</th><th>Registered At</th><th>Actions</th></tr>
+    {% for u in pending %}
+    <tr>
+      <td>{{ u.username }}</td>
+      <td>{{ u.email or '-' }}</td>
+      <td>{{ u.registered_at }}</td>
+      <td>
+        <form method="post" action="{{ url_for('main.approve_user', user_id=u.id) }}"
+              style="display:inline">
+          <button type="submit" class="approve">Approve</button>
+        </form>
+        <form method="post" action="{{ url_for('main.reject_user', user_id=u.id) }}"
+              style="display:inline">
+          <button type="submit" class="reject"
+                  onclick="return confirm('Reject this registration request?')">Reject</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">No pending registration requests.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</body>
+</html>

@@ -14,7 +14,10 @@ def create_app():
         # create a default admin user if none exists (Phase 1 shortcut)
         if not User.query.filter_by(username="admin").first():
             admin = User(username="admin",
-                         password_hash=generate_password_hash("admin123"))
+                         email="admin@local",
+                         password_hash=generate_password_hash("admin123"),
+                         status="approved",
+                         is_admin=True)
             db.session.add(admin)
             db.session.commit()
 

@@ -3,10 +3,33 @@
 <head>
   <meta charset="utf-8">
   <title>Threat Traceback — {{ data.mac }}</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; background: #f5f6f8;
+           padding-bottom: 40px; }
+    nav { background: #2c3e50; padding: 12px 20px; }
+    nav a { color: #ecf0f1; margin-right: 18px; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    .badge { background: #e74c3c; color: #fff; border-radius: 10px;
+             padding: 1px 8px; font-size: .8em; margin-left: 4px; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 20px; }
+    h2 { color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 6px; }
+    table { border-collapse: collapse; width: 100%; background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #eee;
+             font-size: .92em; }
+    th { background: #2c3e50; color: #fff; }
+    tr:nth-child(even) { background: #fafafa; }
+  </style>
 </head>
 <body>
+<nav>
+  <a href="{{ url_for('main.admin_dashboard') }}">Dashboard</a>
+  <a href="{{ url_for('main.pending_users') }}">Pending Users</a>
+  <a href="{{ url_for('main.logout') }}">Logout</a>
+</nav>
+<div class="wrap">
 <h1>Threat Traceback — {{ data.mac }}</h1>
-<p><a href="{{ url_for('main.dashboard') }}">&laquo; Back to dashboard</a></p>
+<p><a href="{{ url_for('main.admin_dashboard') }}">&laquo; Back to dashboard</a></p>
 
 <p><b>First anomaly (MEDIUM+) at:</b>
   {{ data.first_seen_anomaly or 'none recorded' }}</p>
@@ -39,5 +62,6 @@
   <tr><td colspan="7">No history available</td></tr>
   {% endfor %}
 </table>
+</div>
 </body>
 </html>

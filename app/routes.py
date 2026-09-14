@@ -1,6 +1,7 @@
-from flask import Blueprint, render_template, request, redirect, session, url_for
-from werkzeug.security import check_password_hash
+from flask import Blueprint, render_template, request, redirect, session, url_for, flash
+from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime
+from sqlalchemy.exc import IntegrityError
 from .models import User, Device, AuthEvent, Ban, db
 from .enforcement.quarantine import release_device
 from .logging.forensic import log_forensic_event
@@ -8,6 +9,13 @@ from .traceback.tracer import reconstruct_timeline
 from .sync_devices import sync_devices
 
 main = Blueprint("main", __name__)
+
+
+def _require_login():
+    if "user" not in session:
+        return redirect(url_for("main.login"))
+    return None
+
 
 @main.route("/login", methods=["GET", "POST"])
 def login():
@@ -21,25 +29,130 @@ def login():
             result="Success" if success else "Failed",
         ))
         db.session.commit()
-        if success:
-            session["user"] = user.username
-            return redirect(url_for("main.dashboard"))
-        return "Invalid credentials", 401
+        if not success:
+            return "Invalid credentials", 401
+        if user.status != "approved":
+            return "Your account is pending admin approval.", 403
+        session["user"] = user.username
+        return redirect(url_for("main.admin_dashboard"))
     return render_template("login.html")
 
-@main.route("/dashboard")
-def dashboard():
-    if "user" not in session:
+
+@main.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+
+        if not username or not password or not email:
+            return "Username, email and password are all required.", 400
+        if password != confirm:
+            return "Passwords do not match.", 400
+        if User.query.filter_by(username=username).first():
+            return "Username already taken.", 400
+        if User.query.filter_by(email=email).first():
+            return "Email already registered.", 400
+
+        try:
+            db.session.add(User(
+                username=username,
+                email=email,
+                password_hash=generate_password_hash(password),
+                status="pending",
+                is_admin=False,
+            ))
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return "Username or email already registered.", 400
+
+        flash("Registration submitted. An admin must approve your account before you can log in.")
         return redirect(url_for("main.login"))
+    return render_template("register.html")
+
+
+@main.route("/admin/pending")
+def pending_users():
+    guard = _require_login()
+    if guard:
+        return guard
+    pending = User.query.filter_by(status="pending").order_by(
+        User.registered_at.asc()).all()
+    return render_template("pending_users.html", pending=pending)
+
+
+@main.route("/admin/approve/<int:user_id>", methods=["POST"])
+def approve_user(user_id):
+    guard = _require_login()
+    if guard:
+        return guard
+    user = User.query.get(user_id)
+    if not user:
+        return "User not found", 404
+    user.status = "approved"
+    db.session.commit()
+    log_forensic_event(user.username, "USER_APPROVED",
+                       f"Approved registration for {user.username}")
+    return redirect(url_for("main.pending_users"))
+
+
+@main.route("/admin/reject/<int:user_id>", methods=["POST"])
+def reject_user(user_id):
+    guard = _require_login()
+    if guard:
+        return guard
+    user = User.query.get(user_id)
+    if not user:
+        return "User not found", 404
+    user.status = "rejected"
+    db.session.commit()
+    log_forensic_event(user.username, "USER_REJECTED",
+                       f"Rejected registration for {user.username}")
+    return redirect(url_for("main.pending_users"))
+
+
+@main.route("/admin")
+def admin_dashboard():
+    guard = _require_login()
+    if guard:
+        return guard
     devices = Device.query.all()
     active_bans = Ban.query.filter_by(active=True).order_by(Ban.since.desc()).all()
-    return render_template("dashboard.html", devices=devices,
-                           active_bans=active_bans)
+    pending = User.query.filter_by(status="pending").all()
+    recent_events = (AuthEvent.query
+                     .order_by(AuthEvent.timestamp.desc())
+                     .limit(20).all())
+
+    stats = {
+        "total_devices": len(devices),
+        "high_risk": sum(1 for d in devices if d.risk_level == "HIGH"),
+        "medium_risk": sum(1 for d in devices if d.risk_level == "MEDIUM"),
+        "active_bans": len(active_bans),
+        "pending_users": len(pending),
+    }
+    return render_template("admin.html", devices=devices,
+                           active_bans=active_bans,
+                           recent_events=recent_events,
+                           pending_users=pending,
+                           stats=stats)
+
+
+# Backwards-compat: the Phase 1-5 dashboard now lives at /admin.
+@main.route("/dashboard")
+def dashboard():
+    guard = _require_login()
+    if guard:
+        return guard
+    return redirect(url_for("main.admin_dashboard"))
+
 
 @main.route("/admin/unban/<mac>", methods=["POST"])
 def unban(mac):
-    if "user" not in session:
-        return redirect(url_for("main.login"))
+    guard = _require_login()
+    if guard:
+        return guard
     ban = Ban.query.filter_by(mac=mac, active=True).first()
     if ban:
         ban.active = False
@@ -52,14 +165,17 @@ def unban(mac):
         device.status = "unknown"
     db.session.commit()
     log_forensic_event(mac, "UNBAN", "Released from quarantine (status -> unknown)")
-    return redirect(url_for("main.dashboard"))
+    return redirect(url_for("main.admin_dashboard"))
+
 
 @main.route("/admin/traceback/<mac>")
 def traceback_view(mac):
-    if "user" not in session:
-        return redirect(url_for("main.login"))
+    guard = _require_login()
+    if guard:
+        return guard
     data = reconstruct_timeline(mac)
     return render_template("traceback.html", data=data)
+
 
 @main.route("/logout")
 def logout():

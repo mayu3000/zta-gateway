@@ -7,7 +7,12 @@ db = SQLAlchemy()
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=True)
     password_hash = db.Column(db.String(200), nullable=False)
+    # Phase 6: registration workflow — pending until an admin approves.
+    status = db.Column(db.String(20), default="pending")  # pending/approved/rejected
+    registered_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_admin = db.Column(db.Boolean, default=False)
 
 
 class AuthEvent(db.Model):

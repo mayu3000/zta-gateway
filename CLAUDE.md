@@ -141,3 +141,34 @@ user's own network.
   at QUARANTINE / UNBAN / RISK_TRANSITION / STATUS_CHANGE. Independent of DB.
 - Schema changed again (ban + risk_history tables) → delete `db/zta.db` to
   rebuild.
+
+## Phase 6 (admin dashboard polish & live monitoring)
+
+- **User model extended** (`app/models.py`): `email`, `status` (pending/
+  approved/rejected), `registered_at`, `is_admin` added to `User`. New
+  registrations default to `status="pending"` until an admin approves.
+- **Self-registration** (`POST /register` + `register.html`): username + email
+  + password (with confirm). Creates a pending user, flashes confirmation,
+  redirects to login. Uniqueness enforced on both username and email.
+- **Admin approval queue** (`/admin/pending` + `pending_users.html`, Fig.4):
+  pending users with Approve / Reject buttons; both log forensic events
+  (`USER_APPROVED` / `USER_REJECTED`).
+- **Login blocks non-approved users**: correct password but `status !=
+  "approved"` → HTTP 403 "Your account is pending admin approval."
+- **Admin dashboard** (`/admin` + `admin.html`, Fig.5 + Fig.6):
+  - Summary tile cards: Total Devices, High Risk, Medium Risk, Active Bans,
+    Pending Approvals (links to pending page).
+  - Full connected-devices table (all risk columns + traceback links).
+  - Active Bans table with Unban buttons.
+  - Recent Authentication Events (last 20) with `.success`/`.failed` row
+    classes (green/red).
+  - 10-second auto-refresh via `<meta http-equiv="refresh" content="10">`.
+- **Consistent nav bar** on every page: Dashboard | Pending Users (red badge
+  = pending count) | Logout.
+- **Backwards compat**: `/dashboard` 302-redirects to `/admin`; old
+  `dashboard.html` removed — `admin.html` is the single source of truth.
+- **Admin seed updated** (`app/__init__.py`): default admin now has
+  `email="admin@local"`, `status="approved"`, `is_admin=True`.
+- Schema changed again (new User columns) → delete `db/zta.db` to rebuild.
+- Verified: 26-test smoke run (register → pending → approve → login → tiles
+  → bans → events) all passing.
