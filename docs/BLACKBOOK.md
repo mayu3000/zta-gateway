@@ -127,7 +127,8 @@ of DB). On Windows, quarantine is recorded in full but spoofing is skipped
 ### Phase 6 — Admin dashboard + live monitoring
 Self-registration with a pending→approval queue (Fig.4), summary tiles
 (Fig.5), active-bans table, recent colour-coded authentication events (Fig.6),
-10s auto-refresh, consistent navigation. **26 automated checks passed.**
+10s auto-refresh, consistent navigation. **24 automated checks passed** (final
+`tests/test_phase6.py` suite).
 
 ### Phase 7 — Auth hardening + captive portal + network extension
 Email verification with one-time tokens (SMTP configured → real delivery;
@@ -140,7 +141,9 @@ and **escalation rules** (repeat offenders banned at 0.75× / 0.5× threshold).
 ### Phase 8 — System integration + documentation (this document)
 Single end-to-end automated test drives the assembled pipeline (discovery →
 baseline → scoring → enforcement → traceback → unban → escalation)
-**35 automated checks passed**.
+**35 automated checks passed**. Final shipped suite spans **93 automated
+checks across three files**: `tests/test_phase6.py` (24), `tests/test_phase7.py`
+(34), `tests/test_integration.py` (35).
 
 ## 6. Testing & Validation
 
