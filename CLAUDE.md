@@ -281,4 +281,5 @@ until the branch is validated on the VM and explicitly merged back.
   run.py` → expect `[enforcement] iptables DROP active (Linux, root)` in the
   startup log, sniffer bound to `eth1`, then a live wired E2E (sweep →
   auto-ban → `iptables -L -v FORWARD` shows the rule → device offline →
-  unban → rule gone).
+  unban → rule gone). Full step-by-step with latency checks in
+  `docs/RUNBOOK-KALI-OPTIONA.md`.
