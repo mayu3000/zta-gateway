@@ -1,35 +1,49 @@
 """Network discovery "sensor".
 
-On this Windows machine (MinGW/MSYS2 Python + Npcap) Scapy's ARP scan only
-receives the host's own ARP reply and misses every other host — see
-`scan_network_scapy` below. The reliable approach here is OS-native: send a
-directed broadcast ping to wake ARP resolution, then read the system ARP
-cache (`arp -a`). This is the same idea arp-scan implements, minus raw sockets.
+Two sensors, chosen per platform:
+  Linux (Option A inline gateway): Scapy's native ARP broadcast scan — the
+  originally-designed sensor, which works properly on native Linux (raw
+  sockets + root) but was deferred on Windows. Falls back to OS-native
+  ping + neighbor-table parse if Scapy errors.
+  Windows: Scapy only receives its own ARP reply on MinGW/Npcap, so the
+  reliable path is a directed-broadcast ping to wake ARP resolution, then
+  read the system ARP cache (`arp -a`).
 """
 import ipaddress
+import platform
 import subprocess
 
+from app import config as cfg
 from app.capture.resolve import local_ip_macs, parse_arp_table
 
+_IS_LINUX = platform.system() != "Windows"
 
-def scan_network(ip_range="192.168.1.0/24"):
-    """Return a list of {ip, mac} for hosts answering on the subnet.
 
-    Sends a couple of directed-broadcast ICMP pings so live hosts resolve
-    themselves in the OS ARP cache, then parses ``arp -a`` for this subnet
-    (shared parser: app/capture/resolve.py).
-    """
+def scan_network(ip_range=None, iface=None):
+    """Return a list of {ip, mac} for hosts answering on the subnet."""
+    if ip_range is None:
+        ip_range = cfg.INTERNAL_SUBNET
+    if _IS_LINUX:
+        try:
+            return scan_network_scapy(ip_range, iface or cfg.INTERNAL_IFACE)
+        except Exception:  # noqa: BLE001 — scapy may lack raw-socket access
+            pass
+    return _scan_ping_arp(ip_range)
+
+
+def _scan_ping_arp(ip_range):
+    """Broadcast-ping wake + neighbor-table parse (works on both OSes)."""
     net = ipaddress.ip_network(ip_range, strict=False)
     broadcast = str(net.broadcast_address)
-    # -w 400 = 400 ms timeout per reply; two pings gives slow devices a chance.
-    subprocess.run(
-        ["ping", "-n", "2", "-w", "400", broadcast],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    if _IS_LINUX:
+        ping = ["ping", "-c", "2", "-W", "1", broadcast]
+    else:
+        ping = ["ping", "-n", "2", "-w", "400", broadcast]
+    subprocess.run(ping, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     seen = set()
     devices = []
-    # arp -a omits this machine itself, so merge in own adapter rows too.
+    # neighbor table omits this machine itself, merge in own adapter rows too.
     arp_entries = parse_arp_table()
     arp_entries.update(local_ip_macs())
     for ip, mac in arp_entries.items():
@@ -44,16 +58,18 @@ def scan_network(ip_range="192.168.1.0/24"):
     return devices
 
 
-def scan_network_scapy(ip_range="192.168.1.0/24"):
-    """Scapy ARP broadcast scan — the classic technique. Kept for reference.
+def scan_network_scapy(ip_range=None, iface=None):
+    """Scapy ARP broadcast scan — the classic technique (native Linux).
 
-    NOTE: On this machine (MSYS2/MinGW Python + Npcap) it only ever receives
-    replies from the host itself, so it is NOT used as the default sensor.
+    On Windows/MinGW+Npcap it only ever receives replies from the host
+    itself, so it is NOT used there (auto-falls back to _scan_ping_arp).
     """
+    if ip_range is None:
+        ip_range = cfg.INTERNAL_SUBNET
     from scapy.all import ARP, Ether, srp
 
     packet = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip_range)
-    result = srp(packet, timeout=3, verbose=0)[0]
+    result = srp(packet, timeout=3, verbose=0, iface=iface)[0]
     devices = []
     for _sent, received in result:
         devices.append({"ip": received.psrc, "mac": received.hwsrc})

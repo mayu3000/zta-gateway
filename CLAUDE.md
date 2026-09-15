@@ -253,3 +253,32 @@ user's own network.
   `app/mail.py` detects it at import and falls back to console + forensic-log
   delivery. Install `Flask-Mail` + set `MAIL_SERVER` to enable it.
 - Tagged `v1.0-final`.
+
+## Option A / Linux deployment (branch `feature/option-a-inline`)
+
+`main` / `v1.0-final` is the Windows submission (Option B, ARP quarantine
+recorded-only). The `feature/option-a-inline` branch carries the true inline-
+gateway port: `iptables DROP` enforcement, Scapy ARP discovery, Linux
+neighbor-table resolution, Kali dual-NIC constants. Nothing on `main` changes
+until the branch is validated on the VM and explicitly merged back.
+
+- **Run on the Kali VM (inline gateway):** `sudo venv/bin/python run.py`
+  (root needed for iptables + scapy raw sockets). eth0 = uplink, eth1 =
+  internal (`app/config.py`: `192.168.50.0/24`, gateway `.50.1`).
+- **Enforcement modes** (`app/enforcement/quarantine.py`, resolved at import):
+  `ZTA_ENFORCE` ∈ {`iptables`, `arp`, `recorded`} wins; else `iptables` on
+  Linux-as-root, else `recorded`. Each ban adds `iptables -I FORWARD -s <ip>
+  -j DROP`; unban deletes it. `arp` re-enables the legacy spoof loop.
+  `recorded` = DB+forensic-log only (Windows/test fallback).
+- **Tests never touch the firewall:** each suite sets `ZTA_ENFORCE=recorded`,
+  so the 95 checks run unprivileged on any OS — run them with the regular
+  (non-sudo) venv python, sequentially.
+- **Discovery:** Linux prefers the Scapy ARP scan (`scan_network_scapy`,
+  needs root), falls back to ping+neighbor-table. Windows keeps the
+  broadcast-ping + `arp -a` path. Ping flags are platform-branched.
+- **TODO for Kali validation (not done on this branch):** clone/pull the
+  branch, venv, `pip install -r requirements.txt`, `sudo ./venv/bin/python
+  run.py` → expect `[enforcement] iptables DROP active (Linux, root)` in the
+  startup log, sniffer bound to `eth1`, then a live wired E2E (sweep →
+  auto-ban → `iptables -L -v FORWARD` shows the rule → device offline →
+  unban → rule gone).

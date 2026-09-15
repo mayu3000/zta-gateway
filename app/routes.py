@@ -193,12 +193,14 @@ def unban(mac):
     if ban:
         ban.active = False
         ban.unbanned_at = datetime.utcnow()
-    release_device(mac)
     device = Device.query.filter_by(mac=mac).first()
     if device:
+        release_device(device.ip, mac)
         # Zero-trust choice: unban does NOT restore approval — it resets to
         # "unknown" so the device has to re-earn trust from scratch.
         device.status = "unknown"
+    else:
+        release_device(None, mac)
     db.session.commit()
     log_forensic_event(mac, "UNBAN", "Released from quarantine (status -> unknown)")
     return redirect(url_for("main.admin_dashboard"))

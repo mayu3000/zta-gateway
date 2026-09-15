@@ -283,3 +283,57 @@ the honest limitations above scoped precisely for the reviewer.
 9. OWASP Authentication Cheat Sheet — session and password handling.
 10. Claude Code tool output / project run logs — implementation detail.
    *(Review-1 reference list reused; Welford + StevenBlack added.)*
+
+---
+
+## 13. Option A Validation (post-submission addendum, branch `feature/option-a-inline`)
+
+Work on the tagged `v1.0-final` submission continued after the main review
+build in the direction of the option that §8.3 and §9 left as "begun, not
+finished": a true inline gateway with firewall-level enforcement. This is
+supplementary material — the shipped submission remains Option B (ARP
+quarantine, recorded-only on Windows), and nothing on `main` changed.
+
+**What the branch ports**
+
+- **Enforcement (`app/enforcement/quarantine.py`)** — the primary path is now
+  `iptables`: a ban inserts `iptables -I FORWARD -s <ip> -j DROP`, unban deletes
+  it. The legacy ARP-spoof loop is preserved as `ZTA_ENFORCE=arp`. Enforcement
+  resolves at import: `ZTA_ENFORCE` (iptables|arp|recorded) wins, else
+  `iptables` on Linux-as-root, else recorded. `recorded` is the test/Windows
+  fallback — identical to the Option B behavior.
+- **Device discovery (`app/discovery.py`)** — on Linux the originally-designed
+  Scapy ARP broadcast scan (`scan_network_scapy`, deferred on Windows/MinGW)
+  is now the primary sensor, with the OS ping+neighbor-table path as fallback.
+  Ping flags are platform-branched (`-n 2 -w 400` vs `-c 2 -W 4`).
+- **MAC/address resolution (`app/capture/resolve.py`)** — parses the Linux
+  kernel neighbor table (`ip -o neigh show lladdr`) alongside the Windows
+  `arp -a` format.
+- **Deployment constants (`app/config.py`)** — new; consolidates the Kali
+  dual-NIC addresses (`192.168.50.0/24`, gateway `192.168.50.1`, `eth1`
+  internal / `eth0` uplink) replacing the scattered `192.168.1.x` literals.
+- **Sniffer (`app/capture/sniffer.py`)** — interface auto-pick now defaults to
+  the internal subnet so a bare `start_sniffing()` binds `eth1` on the Kali VM.
+- **Unban (`app/routes.py`)** — passes the device IP so the iptables rule can
+  be removed by address, not just MAC.
+
+**Test-mode guard.** Each suite sets `ZTA_ENFORCE=recorded`, so the 95-test
+suite runs unprivileged and never touches the kernel firewall — same behavior
+as the Windows build. The suite still passes 95/95 on this branch.
+
+**Honest status (unchanged from §8.3).** True Option A isolation on the wire
+still requires the Kali VM run as root (`sudo venv/bin/python run.py`), with
+real devices behind `eth1`. This branch is code-complete and Windows-verified,
+not yet Lab-verified; the §11 checklist ("Option A ... begun, not finished")
+remains accurate until a live hostapd-free wired E2E is run on the VM.
+
+## 14. Soak test — pilot-only record (2026-09-15)
+
+The unattended ≥ 4 h soak (checklist item §11) was *not* fully completed. The
+server ran overnight for ~57 minutes before the session ended and the process
+was stopped; evidence in `db/zta.db` before the run concluded: **422
+RiskHistory rows across 6 devices**, spanning 2026-09-14 23:57 → 2026-09-15
+00:54 (UTC+5:30), with a 55.9 MiB working-set baseline at 00:10 IST. This is
+adequate as a *pilot* (no crash over ~1 h, monotonic DB writes), but **no
+≥ 4 h stability verdict is claimed** — the checklist item stays open until a
+full unattended run is completed.

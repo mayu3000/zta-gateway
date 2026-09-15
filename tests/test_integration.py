@@ -17,6 +17,7 @@ sys.path.insert(0, _ROOT)
 # Throwaway DB (schema is current; rebuild so the scenario starts clean).
 # Never the live server's zta.db — a soak-testing run.py may hold it open.
 os.environ["ZTA_DB"] = "sqlite:///../db/zta_test.db"
+os.environ.setdefault("ZTA_ENFORCE", "recorded")  # no iptables under tests
 _db = os.path.join(_ROOT, "db", "zta_test.db")
 if os.path.exists(_db):
     os.remove(_db)
@@ -163,7 +164,7 @@ with app.app_context():
     ban = Ban.query.filter_by(mac=MAC, active=True).first()
     ok.append(check("4. auto-quarantine fired (active Ban row)", ban is not None))
     ok.append(check("4. device status -> banned", d.status == "banned"))
-    ok.append(check("4. quarantine registered (recorded-only on Windows)",
+    ok.append(check("4. quarantine registered (recorded-only in test mode)",
                     MAC in active_quarantines()))
     ok.append(check("4. good device unaffected by attack window",
                     g.status != "banned" and g.risk_level == "LOW"))

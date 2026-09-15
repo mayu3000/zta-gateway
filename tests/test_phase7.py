@@ -14,6 +14,7 @@ sys.path.insert(0, _ROOT)
 # portal device (aa:bb:cc:dd:ee:f2) AND leave get_last_verification_url()
 # returning None, which crashes sum(ok) below.
 os.environ["ZTA_DB"] = "sqlite:///../db/zta_test.db"
+os.environ.setdefault("ZTA_ENFORCE", "recorded")  # no iptables under tests
 _db = os.path.join(_ROOT, "db", "zta_test.db")
 if os.path.exists(_db):
     os.remove(_db)

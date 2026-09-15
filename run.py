@@ -1,5 +1,5 @@
 import threading, time
-from app import create_app
+from app import create_app, config as cfg
 from app.sync_devices import sync_devices
 from app.capture.sniffer import start_sniffing
 from app.features.extract import extract_features
@@ -7,7 +7,7 @@ from app.policy.composite import compute_composite_risk
 from app.policy.scoring import risk_level
 from app.baseline.model import update_baseline
 from app.enforcement.quarantine import (
-    quarantine_device, release_device, INJECTION_AVAILABLE,
+    quarantine_device, release_device, ENFORCEMENT_MODE,
 )
 from app.logging.forensic import log_forensic_event
 from app.models import db, Device, Ban, RiskHistory, DNSLog, BandwidthLog
@@ -96,9 +96,12 @@ def run_scoring_window(app):
             threshold = effective_ban_threshold(HIGH_RISK_BAN_THRESHOLD, mac)
             if total >= threshold and not existing_ban:
                 prior = Ban.query.filter_by(mac=mac).count()
-                injected = quarantine_device(device.ip, mac)
-                mode = "ARP spoof active" if injected else \
-                    "recorded-only (Windows injection unavailable)"
+                injected = quarantine_device(device.ip, mac,
+                                             gateway_ip=cfg.GATEWAY_INTERNAL_IP)
+                mode = {"iptables": "iptables DROP active",
+                        "arp": "ARP spoof active",
+                        "recorded": "recorded-only (test/Windows mode)"}.get(
+                            ENFORCEMENT_MODE, "recorded")
                 db.session.add(Ban(
                     mac=mac,
                     reason=f"Composite risk score {total} crossed "
@@ -140,10 +143,14 @@ def periodic_risk_scoring():
         run_scoring_window(app)
 
 if __name__ == "__main__":
-    if not INJECTION_AVAILABLE:
-        print("[enforcement] ARP injection unavailable on Windows/MinGW — "
-              "quarantines will be recorded (DB + forensic log), not spoofed "
-              "on the wire. True isolation validated on Linux/VM.")
+    _mode_msgs = {
+        "iptables": "[enforcement] iptables DROP active (Linux, root)",
+        "arp": "[enforcement] ARP spoof active",
+        "recorded": "[enforcement] recorded-only mode — quarantines are "
+                    "logged (DB + forensic log) but not enforced on the wire. "
+                    "Run as root on Linux (ZTA_ENFORCE=iptables) to isolate.",
+    }
+    print(_mode_msgs.get(ENFORCEMENT_MODE, _mode_msgs["recorded"]), flush=True)
     threading.Thread(target=start_sniffing, daemon=True).start()
     threading.Thread(target=periodic_device_scan, daemon=True).start()
     threading.Thread(target=periodic_risk_scoring, daemon=True).start()
