@@ -13,6 +13,8 @@ import re
 import subprocess
 import time
 
+from app import config as cfg
+
 # Windows `arp -a`:  IP <ws> MAC (dash or colon separated).
 _ARP_LINE = re.compile(
     rb"(\d{1,3}(?:\.\d{1,3}){3})\s+([0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5})",
@@ -28,10 +30,23 @@ _MAC_DASH = re.compile(r"-")
 _IS_LINUX = platform.system() != "Windows"
 
 
-def parse_ip_neigh():
-    """Parse `ip -o neigh show` -> {ip: normalized_mac} (Linux only)."""
-    out = subprocess.run(["ip", "-o", "neigh", "show"],
-                         capture_output=True).stdout
+def parse_ip_neigh(dev=None):
+    """Parse `ip -o neigh show` -> {ip: normalized_mac} (Linux only).
+
+    Limited to the internal interface (eth1 or the Wi-Fi AP wlan0) so uplink
+    neighbours, such as the home router, are never mistaken for clients. Falls
+    back to all interfaces if that device does not exist (dev machines).
+    """
+    dev = dev or cfg.INTERNAL_IFACE
+    try:
+        proc = subprocess.run(["ip", "-o", "neigh", "show", "dev", dev],
+                              capture_output=True)
+        if proc.returncode != 0:
+            proc = subprocess.run(["ip", "-o", "neigh", "show"],
+                                  capture_output=True)
+    except OSError:          # `ip` (iproute2) not installed
+        return {}
+    out = proc.stdout
     macs = {}
     for m in _LINUX_NEIGH.finditer(out):
         ip = m.group(1).decode()

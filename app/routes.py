@@ -4,8 +4,10 @@ from functools import wraps
 from flask import (Blueprint, render_template, request, redirect, session,
                    url_for, flash, current_app)
 from werkzeug.security import check_password_hash, generate_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
+from . import config as cfg
 from .models import User, Device, AuthEvent, Ban, db
 from .enforcement.quarantine import release_device
 from .logging.forensic import log_forensic_event
@@ -158,7 +160,13 @@ def reject_user(user_id):
 @main.route("/admin")
 @admin_required
 def admin_dashboard():
-    devices = Device.query.all()
+    # "Connected" = seen by the discovery sensor recently. Devices that left the
+    # network age out after CONNECTED_TTL_SECONDS, but a banned device always
+    # stays listed so the table matches the Active Bans tile.
+    cutoff = datetime.utcnow() - timedelta(seconds=cfg.CONNECTED_TTL_SECONDS)
+    devices = (Device.query
+               .filter(or_(Device.last_seen >= cutoff, Device.status == "banned"))
+               .all())
     active_bans = Ban.query.filter_by(active=True).order_by(Ban.since.desc()).all()
     pending = User.query.filter_by(status="pending").all()
     recent_events = (AuthEvent.query

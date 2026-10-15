@@ -11,12 +11,40 @@ Two sensors, chosen per platform:
 """
 import ipaddress
 import platform
+import re
 import subprocess
 
 from app import config as cfg
 from app.capture.resolve import local_ip_macs, parse_arp_table
 
 _IS_LINUX = platform.system() != "Windows"
+
+_STATION_LINE = re.compile(r"^Station\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})",
+                           re.MULTILINE)
+
+
+def get_wifi_stations(iface=None):
+    """MACs currently associated to the Wi-Fi AP on *iface*.
+
+    Uses `iw dev <iface> station dump`, which reflects association state in
+    real time (a phone that leaves Wi-Fi disappears within seconds, unlike an
+    ARP/neighbor cache entry that lingers for minutes).
+
+    Returns a set of lowercase MACs, or None when this is not a wireless AP
+    interface (Windows, wired eth1, `iw` missing, no AP running). None means
+    "no Wi-Fi information available", so callers must not filter on it.
+    """
+    if not _IS_LINUX:
+        return None
+    iface = iface or cfg.INTERNAL_IFACE
+    try:
+        proc = subprocess.run(["iw", "dev", iface, "station", "dump"],
+                              capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return {m.lower() for m in _STATION_LINE.findall(proc.stdout)}
 
 
 def scan_network(ip_range=None, iface=None):
@@ -25,9 +53,14 @@ def scan_network(ip_range=None, iface=None):
         ip_range = cfg.INTERNAL_SUBNET
     if _IS_LINUX:
         try:
-            return scan_network_scapy(ip_range, iface or cfg.INTERNAL_IFACE)
+            devices = scan_network_scapy(ip_range, iface or cfg.INTERNAL_IFACE)
         except Exception:  # noqa: BLE001 — scapy may lack raw-socket access
-            pass
+            return _scan_ping_arp(ip_range)
+        # Wi-Fi AP mode: only devices still associated count as connected.
+        stations = get_wifi_stations(iface or cfg.INTERNAL_IFACE)
+        if stations is not None:
+            devices = [d for d in devices if d["mac"].lower() in stations]
+        return devices
     return _scan_ping_arp(ip_range)
 
 

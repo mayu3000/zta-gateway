@@ -22,6 +22,8 @@ import subprocess
 import threading
 import time
 
+from app import config as cfg
+
 # --- mode resolution ----------------------------------------------------------
 
 def _is_linux_root():
@@ -67,19 +69,53 @@ def _spoof_loop(target_ip, target_mac, gateway_ip, stop_event):
 
 # --- iptables helpers ---------------------------------------------------------
 
-def _iptables_add(ip):
-    """Insert a FORWARD DROP rule for the target IP. No-op when ip is falsy."""
-    if not ip:
-        return
-    subprocess.run(["iptables", "-I", "FORWARD", "-s", ip, "-j", "DROP"],
-                   check=False)
+def _drop_rules(ip, mac):
+    """iptables match specs for one quarantined device.
 
-def _iptables_del(ip):
-    """Remove the FORWARD DROP rule for the target IP (if it exists)."""
-    if not ip:
+    FORWARD DROP cuts its internet access (the original rule). INPUT DROP also
+    stops it reaching the gateway itself (admin dashboard, Flask app). DHCP is
+    unaffected: a lease request has source 0.0.0.0, not the device IP.
+
+    The MAC rules matter on Wi-Fi: a banned phone that rejoins can be handed a
+    different DHCP address, which would sidestep an IP-only rule.
+    """
+    specs = []
+    if ip:
+        specs += [("FORWARD", ["-s", ip]), ("INPUT", ["-s", ip])]
+    if mac:
+        specs += [("FORWARD", ["-m", "mac", "--mac-source", mac]),
+                  ("INPUT", ["-m", "mac", "--mac-source", mac])]
+    return specs
+
+def _iptables_add(ip, mac=None):
+    """Insert the DROP rules for the target. No-op when neither is known."""
+    for chain, match in _drop_rules(ip, mac):
+        subprocess.run(["iptables", "-I", chain, *match, "-j", "DROP"],
+                       check=False)
+
+def _iptables_del(ip, mac=None):
+    """Remove the DROP rules for the target (missing rules are ignored)."""
+    for chain, match in _drop_rules(ip, mac):
+        subprocess.run(["iptables", "-D", chain, *match, "-j", "DROP"],
+                       check=False, stderr=subprocess.DEVNULL)
+
+def _wifi_deauth(mac):
+    """Kick a banned client off the Wi-Fi AP so it drops immediately.
+
+    Best effort and only meaningful when hostapd runs on INTERNAL_IFACE; it
+    silently does nothing on a wired setup or when hostapd_cli is missing. The
+    DROP rules stay in force, so the client cannot use the network if it
+    rejoins.
+    """
+    if not mac:
         return
-    subprocess.run(["iptables", "-D", "FORWARD", "-s", ip, "-j", "DROP"],
-                   check=False)
+    try:
+        subprocess.run(["hostapd_cli", "-i", cfg.INTERNAL_IFACE,
+                        "deauthenticate", mac],
+                       check=False, timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 # --- public API ---------------------------------------------------------------
 
@@ -93,7 +129,8 @@ def quarantine_device(target_ip, target_mac, gateway_ip=None):
         return INJECTION_AVAILABLE
 
     if ENFORCEMENT_MODE == "iptables":
-        _iptables_add(target_ip)
+        _iptables_add(target_ip, target_mac)
+        _wifi_deauth(target_mac)
         _active_quarantines[target_mac] = None
         return True
 
@@ -123,7 +160,7 @@ def release_device(target_ip, target_mac):
     if stop_event is not None and ENFORCEMENT_MODE == "arp":
         stop_event.set()
     elif ENFORCEMENT_MODE == "iptables":
-        _iptables_del(target_ip)
+        _iptables_del(target_ip, target_mac)
 
 
 def active_quarantines():

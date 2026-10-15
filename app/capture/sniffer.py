@@ -23,6 +23,14 @@ def _pick_interface(subnet=cfg.INTERNAL_SUBNET):
     """
     net = ipaddress.ip_network(subnet, strict=False)
     fallback = None
+    # Prefer the configured internal interface (eth1 or the Wi-Fi AP wlan0)
+    # when it exists and already holds an address on the internal subnet.
+    if cfg.INTERNAL_IFACE in get_if_list():
+        try:
+            if ipaddress.ip_address(get_if_addr(cfg.INTERNAL_IFACE)) in net:
+                return cfg.INTERNAL_IFACE
+        except Exception:
+            pass
     for iface in get_if_list():
         try:
             ip = get_if_addr(iface)
