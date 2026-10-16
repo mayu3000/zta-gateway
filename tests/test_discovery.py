@@ -86,9 +86,54 @@ class WifiStationGuardTests(unittest.TestCase):
                    {"ip": "192.168.50.50", "mac": "11:22:33:44:55:66"}]
         runner = _fake_iw(1, "command failed: No such device (-19)\n", 0, "")
         with patch.object(discovery, "scan_network_scapy", return_value=devices), \
+             patch.object(discovery, "_scan_ping_arp", return_value=[]), \
+             patch.object(discovery, "local_ip_macs", return_value={}), \
              patch.object(discovery.subprocess, "run", side_effect=runner):
             found = discovery.scan_network(iface="eth1")
         self.assertEqual(len(found), 2)
+
+    def test_scan_network_filters_when_real_ap_has_no_clients(self):
+        """Positive control: a genuine AP with zero clients still hides all."""
+        devices = [{"ip": "192.168.50.98", "mac": "aa:bb:cc:dd:ee:ff"}]
+        runner = _fake_iw(0, "Interface wlan0\n\ttype AP\n", 0, "")
+        with patch.object(discovery, "scan_network_scapy", return_value=devices), \
+             patch.object(discovery, "_scan_ping_arp", return_value=[]), \
+             patch.object(discovery, "local_ip_macs", return_value={}), \
+             patch.object(discovery.subprocess, "run", side_effect=runner):
+            self.assertEqual(discovery.scan_network(iface="wlan0"), [])
+
+    def test_scan_network_unions_scapy_and_neighbour_table(self):
+        """A device seen by only one sensor is still discovered, with no dupes."""
+        scapy = [{"ip": "192.168.50.50", "mac": "11:22:33:44:55:66"}]
+        neigh = [{"ip": "192.168.50.98", "mac": "aa:bb:cc:dd:ee:ff"},
+                 {"ip": "192.168.50.50", "mac": "11:22:33:44:55:66"}]
+        with patch.object(discovery, "scan_network_scapy", return_value=scapy), \
+             patch.object(discovery, "_scan_ping_arp", return_value=neigh), \
+             patch.object(discovery, "get_wifi_stations", return_value=None), \
+             patch.object(discovery, "local_ip_macs", return_value={}):
+            found = discovery.scan_network(iface="eth1")
+        self.assertEqual(sorted(d["mac"] for d in found),
+                         ["11:22:33:44:55:66", "aa:bb:cc:dd:ee:ff"])
+
+    def test_scan_network_unions_when_scapy_raises(self):
+        neigh = [{"ip": "192.168.50.98", "mac": "aa:bb:cc:dd:ee:ff"}]
+        with patch.object(discovery, "scan_network_scapy",
+                          side_effect=OSError("no raw socket")), \
+             patch.object(discovery, "_scan_ping_arp", return_value=neigh), \
+             patch.object(discovery, "get_wifi_stations", return_value=None), \
+             patch.object(discovery, "local_ip_macs", return_value={}):
+            found = discovery.scan_network(iface="eth1")
+        self.assertEqual([d["mac"] for d in found], ["aa:bb:cc:dd:ee:ff"])
+
+    def test_scan_network_excludes_gateway_itself(self):
+        """The gateway's own adapter must never be registered as a device."""
+        own = [{"ip": "192.168.50.1", "mac": "de:ad:be:ef:00:01"}]
+        with patch.object(discovery, "scan_network_scapy", return_value=own), \
+             patch.object(discovery, "_scan_ping_arp", return_value=[]), \
+             patch.object(discovery, "get_wifi_stations", return_value=None), \
+             patch.object(discovery, "local_ip_macs",
+                          return_value={"192.168.50.1": "de:ad:be:ef:00:01"}):
+            self.assertEqual(discovery.scan_network(iface="eth1"), [])
 
 
 if __name__ == "__main__":

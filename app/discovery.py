@@ -76,20 +76,44 @@ def get_wifi_stations(iface=None):
 
 
 def scan_network(ip_range=None, iface=None):
-    """Return a list of {ip, mac} for hosts answering on the subnet."""
+    """Return a list of {ip, mac} for hosts answering on the subnet.
+
+    Unix path uses two independent sensors and **unions** them: the Scapy ARP
+    broadcast and the OS neighbour table (after a directed-broadcast ping to
+    wake sleepy clients). A device that satisfies only one of them -- e.g. a
+    power-saving phone that ignores the ARP broadcast but is already in
+    `ip neigh` -- is still discovered. The two are merged by MAC so a host is
+    never listed twice.
+    """
     if ip_range is None:
         ip_range = cfg.INTERNAL_SUBNET
-    if _IS_LINUX:
-        try:
-            devices = scan_network_scapy(ip_range, iface or cfg.INTERNAL_IFACE)
-        except Exception:  # noqa: BLE001 — scapy may lack raw-socket access
-            return _scan_ping_arp(ip_range)
-        # Wi-Fi AP mode: only devices still associated count as connected.
-        stations = get_wifi_stations(iface or cfg.INTERNAL_IFACE)
-        if stations is not None:
-            devices = [d for d in devices if d["mac"].lower() in stations]
-        return devices
-    return _scan_ping_arp(ip_range)
+
+    if not _IS_LINUX:
+        return _scan_ping_arp(ip_range)
+
+    try:
+        scapy_devices = scan_network_scapy(ip_range, iface or cfg.INTERNAL_IFACE)
+    except Exception:  # noqa: BLE001 — scapy may lack raw-socket access
+        scapy_devices = []
+
+    # Never register the gateway's own adapters as client devices.
+    try:
+        self_ips = set(local_ip_macs())
+    except Exception:  # noqa: BLE001 — scapy missing/lacking raw sockets
+        self_ips = set()
+
+    merged = {}
+    for d in list(scapy_devices) + _scan_ping_arp(ip_range):
+        if d["ip"] in self_ips:
+            continue
+        merged.setdefault(d["mac"].lower(), d)
+    devices = list(merged.values())
+
+    # Wi-Fi AP mode: only devices still associated count as connected.
+    stations = get_wifi_stations(iface or cfg.INTERNAL_IFACE)
+    if stations is not None:
+        devices = [d for d in devices if d["mac"].lower() in stations]
+    return devices
 
 
 def _scan_ping_arp(ip_range):
