@@ -1,9 +1,10 @@
+import json
 import re
 import secrets
 from functools import wraps
 
 from flask import (Blueprint, render_template, request, redirect, session,
-                   url_for, flash, current_app)
+                   url_for, flash, current_app, jsonify)
 from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime, timedelta
 from sqlalchemy import or_
@@ -13,7 +14,7 @@ from .models import User, Device, AuthEvent, Ban, PortalSession, Notification, d
 from .enforcement.quarantine import release_device
 from .enforcement.portal import grant_access, revoke_access as portal_revoke_access
 from .capture.resolve import get_mac_for_ip
-from .logging.forensic import log_forensic_event
+from .logging.forensic import log_forensic_event, LOG_PATH
 from .traceback.tracer import reconstruct_timeline
 from .mail import send_verification_email
 
@@ -334,3 +335,37 @@ def logout():
 @main.route("/hotspot-detect.html")
 def captive_probe():
     return redirect(url_for("main.login"))
+
+
+# --- Demo monitoring (display-only) ----------------------------------------
+# Two additive, read-only JSON endpoints for the dashboard's live event feed
+# and ban toast. They change nothing in scoring, baseline or enforcement; they
+# only expose existing data.
+
+@main.route("/api/recent-events")
+def recent_events():
+    """Last 15 forensic log entries, newest first (dashboard live feed)."""
+    if "user" not in session:
+        return jsonify([]), 401
+    events = []
+    try:
+        with open(LOG_PATH) as f:
+            lines = f.readlines()[-15:]
+        for line in reversed(lines):
+            try:
+                events.append(json.loads(line))
+            except (ValueError, TypeError):
+                continue          # skip a torn/blank trailing line
+    except FileNotFoundError:
+        pass
+    return jsonify(events)
+
+
+@main.route("/api/device-status")
+def device_status_api():
+    """Minimal per-device risk snapshot for the ban toast."""
+    if "user" not in session:
+        return jsonify([]), 401
+    devices = Device.query.all()
+    return jsonify([{"mac": d.mac, "risk_level": d.risk_level}
+                    for d in devices])

@@ -44,6 +44,9 @@
   </style>
 </head>
 <body>
+<div id="ban-toast" style="display:none; position:fixed; top:20px; right:20px;
+     background:#c0392b; color:white; padding:15px 20px; border-radius:8px;
+     font-weight:bold; z-index:999; box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
 <nav>
   <a href="{{ url_for('main.admin_dashboard') }}">Dashboard</a>
   <a href="{{ url_for('main.pending_users') }}">Pending Users
@@ -79,6 +82,11 @@
       </div>
     </a>
   </div>
+
+  <h3>Live Event Feed</h3>
+  <div id="event-feed" style="font-family: monospace; max-height: 250px;
+       overflow-y: auto; background: #1e2733; color: #eee; padding: 10px;
+       border-radius: 6px; font-size: 13px;"></div>
 
   <h2>Connected Devices</h2>
   <table>
@@ -207,5 +215,35 @@
     {% endfor %}
   </table>
 </div>
+<script>
+function refreshFeed() {
+  fetch('/api/recent-events').then(r => r.json()).then(events => {
+    document.getElementById('event-feed').innerHTML = events.length
+      ? events.map(e => `<div>[${e.timestamp || ''}] <b>${e.action || ''}</b> — ${e.mac || ''}</div>`).join('')
+      : '<div style="opacity:0.6">No events yet.</div>';
+  });
+}
+refreshFeed();
+setInterval(refreshFeed, 5000);
+</script>
+<script>
+// Seed the counter from the server-rendered HIGH count so the 10s page
+// refresh does not fire a spurious toast for devices that are already HIGH.
+let lastHighCount = {{ stats.high_risk }};
+function checkBans() {
+  fetch('/api/device-status').then(r => r.json()).then(devices => {
+    const highNow = devices.filter(d => d.risk_level === 'HIGH').length;
+    if (highNow > lastHighCount) {
+      const toast = document.getElementById('ban-toast');
+      toast.innerText = '⚠ New device auto-quarantined!';
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 5000);
+    }
+    lastHighCount = highNow;
+  });
+}
+checkBans();
+setInterval(checkBans, 5000);
+</script>
 </body>
 </html>
