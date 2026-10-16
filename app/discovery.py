@@ -22,6 +22,29 @@ _IS_LINUX = platform.system() != "Windows"
 _STATION_LINE = re.compile(r"^Station\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})",
                            re.MULTILINE)
 
+# `iw dev <iface> info` reports "type AP" only for a real wireless AP.
+_AP_TYPE_LINE = re.compile(r"^\s*type\s+AP\b", re.MULTILINE)
+
+
+def _is_wireless_ap(iface):
+    """True only when *iface* is a wireless interface running in AP mode.
+
+    Needed because `iw dev <iface> station dump` exits 0 with **empty output**
+    on an interface that is not a wireless AP at all -- e.g. a wired NIC, where
+    the nl80211 device lookup returns ENODEV ("No such device (-19)"). Without
+    this guard that empty output is indistinguishable from "AP with no
+    associated stations", and scan_network() would filter out every discovered
+    device (which is exactly what happens on a wired eth1).
+    """
+    try:
+        proc = subprocess.run(["iw", "dev", iface, "info"],
+                              capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    return bool(_AP_TYPE_LINE.search(proc.stdout))
+
 
 def get_wifi_stations(iface=None):
     """MACs currently associated to the Wi-Fi AP on *iface*.
@@ -37,6 +60,11 @@ def get_wifi_stations(iface=None):
     if not _IS_LINUX:
         return None
     iface = iface or cfg.INTERNAL_IFACE
+    # Confirm this really is an AP before trusting `station dump`; on a wired
+    # interface the dump succeeds with no output, which must NOT be read as
+    # "an AP with zero clients".
+    if not _is_wireless_ap(iface):
+        return None
     try:
         proc = subprocess.run(["iw", "dev", iface, "station", "dump"],
                               capture_output=True, text=True, timeout=5)
