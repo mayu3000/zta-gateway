@@ -397,6 +397,8 @@ forensic entry.
   (set / 403 for non-admin / invalid rejected / clear) and the dashboard.
 - The pre-existing suites still pass unchanged: `test_phase6.py` 26/26,
   `test_phase7.py` 34/34, `test_portal.py` 9/9, `test_integration.py` 35/35.
+- Real Gmail SMTP verified 2026-10-16: a live warning was delivered and
+  rendered correctly, and the audit row was written as `sent`.
 
 ### 15.5 Limits (honest)
 

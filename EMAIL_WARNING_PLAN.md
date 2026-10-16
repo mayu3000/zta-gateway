@@ -69,7 +69,9 @@ written as `sent`/`failed` with the error; all wrapped in try/except with a
 `app/mail.py`: `send_risk_email(app, to, subject, body_text, body_html)` reusing
 the lab-mode fallback (console + `EMAIL_NOTICE` forensic entry).
 `get_last_notification()` added. Plain professional wording, no emoji, plain-text
-part always present.
+part always present. **Accept met:** real Gmail SMTP verified 2026-10-16 — a
+live warning delivered and rendered correctly; the `Notification` row came back
+`sent`.
 
 ## Item 6 — Hook into scoring `[x]`
 `run.py` `run_scoring_window`: `medium_streak` tracked; warning fired on rising
