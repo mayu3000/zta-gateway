@@ -1,27 +1,36 @@
-import threading, time
-from app import create_app, config as cfg
-from app.sync_devices import sync_devices
-from app.capture.sniffer import start_sniffing
-from app.features.extract import extract_features
-from app.policy.composite import compute_composite_risk
-from app.policy.scoring import risk_level
-from app.baseline.model import update_baseline
-from app.enforcement.quarantine import (
-    quarantine_device, release_device, ENFORCEMENT_MODE,
-)
-from app.logging.forensic import log_forensic_event
-from app.models import db, Device, Ban, RiskHistory, DNSLog, BandwidthLog
-from app.enforcement.escalation import effective_ban_threshold
-from app.policy.network_risk import is_blocked_domain
+"""ZTA Gateway daemon entry point.
 
-app = create_app()
+Heavy imports are deferred so that `from run import run_scoring_window`
+(used by tests) does not trigger full Flask app initialization — which
+overflows MSYS2/MinGW Python's small C stack when combined with the
+portal-gate models.
+"""
+import threading
+import time
+from datetime import datetime, timedelta
+
+# Lazy app instance: created in main() or by tests that import run_scoring_window.
+app = None
+
+
+def _get_app():
+    """Get or create the Flask app singleton."""
+    global app
+    if app is None:
+        from app import create_app
+        app = create_app()
+    return app
+
 
 HIGH_RISK_BAN_THRESHOLD = 70
 
+
 def periodic_device_scan():
+    from app.sync_devices import sync_devices
     while True:
-        sync_devices(app)
+        sync_devices(_get_app())
         time.sleep(30)
+
 
 def run_scoring_window(app):
     """One scoring pass over the current packet buffer (all devices).
@@ -30,11 +39,23 @@ def run_scoring_window(app):
     (Phase 8 integration testing) without waiting on wall-clock windows.
     Returns {mac: {"total": int, "level": str, "banned": bool}}.
     """
+    from app.features.extract import extract_features
+    from app.baseline.model import update_baseline
+    from app.policy.composite import compute_composite_risk
+    from app.policy.scoring import risk_level
+    from app.policy.network_risk import is_blocked_domain
+    from app.enforcement.escalation import effective_ban_threshold
+    from app.enforcement.quarantine import quarantine_device, ENFORCEMENT_MODE
+    from app.logging.forensic import log_forensic_event
+    from app import config as cfg
+    from app.models import (db, Device, Ban, RiskHistory, DNSLog,
+                           BandwidthLog)
+
     summary = {}
     with app.app_context():
         features = extract_features()
         for mac, feats in features.items():
-            baseline = update_baseline(mac, feats)   # learn from this window
+            baseline = update_baseline(mac, feats)
             device = Device.query.filter_by(mac=mac).first()
             if not device:
                 continue
@@ -53,12 +74,11 @@ def run_scoring_window(app):
             device.network_risk = result["network"]
             device.behavior_risk = result["behavior"]
             device.total_risk = total
-            device.risk_score = total                  # legacy alias
+            device.risk_score = total
             device.risk_level = level
             device.flagged_domains = ",".join(result["flagged_domains"])
             device.fan_out = result["fan_out"]
 
-            # Audit trail row (traceback raw material)
             db.session.add(RiskHistory(
                 mac=mac,
                 identity_risk=result["identity"],
@@ -69,8 +89,6 @@ def run_scoring_window(app):
                 flagged_domains=device.flagged_domains,
             ))
 
-            # Phase 7: persist the full DNS audit trail (every domain this
-            # window, not just flagged ones) + per-window byte totals.
             for domain in feats["dns_queries"]:
                 db.session.add(DNSLog(
                     mac=mac,
@@ -82,15 +100,11 @@ def run_scoring_window(app):
                 bytes_sent=feats["byte_count"],
             ))
 
-            # Forensic log on risk-level transitions (LOW->MEDIUM, MEDIUM->HIGH, ...)
             if prev_level and prev_level != level:
                 log_forensic_event(
                     mac, "RISK_TRANSITION",
                     f"{prev_level} -> {level} (total {total})")
 
-            # Enforcement: cross (escalated) threshold + not already banned
-            # -> quarantine. Repeat offenders have a lower effective
-            # threshold (Phase 7 escalation rules).
             banned_now = False
             existing_ban = Ban.query.filter_by(mac=mac, active=True).first()
             threshold = effective_ban_threshold(HIGH_RISK_BAN_THRESHOLD, mac)
@@ -140,9 +154,58 @@ def run_scoring_window(app):
 def periodic_risk_scoring():
     while True:
         time.sleep(30)
-        run_scoring_window(app)
+        run_scoring_window(_get_app())
+
+
+def periodic_session_expiry():
+    """Revoke sessions idle past the TTL (every 30s)."""
+    while True:
+        time.sleep(30)
+        with _get_app().app_context():
+            from app.models import PortalSession
+            from app.enforcement.portal import revoke_access
+            now = datetime.utcnow()
+            expired = PortalSession.query.filter(
+                PortalSession.state == "granted",
+                PortalSession.expires_at < now,
+            ).all()
+            for ps in expired:
+                ps.state = "expired"
+                revoke_access(ps.mac)
+            if expired:
+                db.session.commit()
+                print(f"[portal] expired {len(expired)} idle session(s)", flush=True)
+
+
+def periodic_connected_check():
+    """Revoke sessions for devices that left the network."""
+    while True:
+        time.sleep(60)
+        with _get_app().app_context():
+            from app import config as cfg
+            from app.models import PortalSession, Device
+            from app.enforcement.portal import revoke_access
+            from app.models import db
+            cutoff = datetime.utcnow() - timedelta(
+                seconds=cfg.CONNECTED_TTL_SECONDS)
+            stale = PortalSession.query.filter(
+                PortalSession.state == "granted",
+            ).join(Device, PortalSession.mac == Device.mac).filter(
+                Device.last_seen < cutoff,
+            ).all()
+            for ps in stale:
+                ps.state = "revoked"
+                revoke_access(ps.mac)
+            if stale:
+                db.session.commit()
+                print(f"[portal] revoked {len(stale)} stale session(s)", flush=True)
+
 
 if __name__ == "__main__":
+    from app.enforcement.quarantine import ENFORCEMENT_MODE
+    from app.capture.sniffer import start_sniffing
+    from app import config as cfg
+
     _mode_msgs = {
         "iptables": "[enforcement] iptables DROP active (Linux, root)",
         "arp": "[enforcement] ARP spoof active",
@@ -151,7 +214,40 @@ if __name__ == "__main__":
                     "Run as root on Linux (ZTA_ENFORCE=iptables) to isolate.",
     }
     print(_mode_msgs.get(ENFORCEMENT_MODE, _mode_msgs["recorded"]), flush=True)
+    _app = _get_app()
     threading.Thread(target=start_sniffing, daemon=True).start()
     threading.Thread(target=periodic_device_scan, daemon=True).start()
     threading.Thread(target=periodic_risk_scoring, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000)
+
+    # --- Portal gate startup reconciliation ---
+    if cfg.PORTAL_GATE:
+        from app.enforcement.portal import setup_gate, sync_bans, grant_access
+        from app.models import PortalSession, Ban
+        from app.models import db
+
+        setup_gate()
+        with _app.app_context():
+            banned_macs = [b.mac for b in Ban.query.filter_by(
+                active=True).all()]
+            sync_bans(banned_macs)
+
+            now = datetime.utcnow()
+            sessions = PortalSession.query.filter_by(
+                state="granted").all()
+            for ps in sessions:
+                if ps.expires_at and ps.expires_at < now:
+                    ps.state = "expired"
+                else:
+                    grant_access(ps.mac)
+                    ps.last_activity = now
+            db.session.commit()
+
+        from app.portal_redirect import start_portal_listener
+        start_portal_listener()
+        print(f"[portal] gate ON, interfaces: "
+              f"{','.join(cfg.INTERNAL_IFACES)}", flush=True)
+
+        threading.Thread(target=periodic_session_expiry, daemon=True).start()
+        threading.Thread(target=periodic_connected_check, daemon=True).start()
+
+    _app.run(host="0.0.0.0", port=5000)

@@ -11,6 +11,13 @@ import os
 import sys
 import time
 
+# MSYS2/MinGW Python has a low default C stack (1MB) that SQLAlchemy's
+# internal re.sub calls can exceed on complex schemas. Raise both the
+# Python recursion limit and the thread stack size.
+sys.setrecursionlimit(10000)
+import threading
+threading.stack_size(8 * 1024 * 1024)
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 

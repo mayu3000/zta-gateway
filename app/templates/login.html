@@ -21,11 +21,19 @@
       {% endfor %}
     {% endif %}
   {% endwith %}
+  <p style="color:#7f8c8d; font-size:.9em; margin-bottom:18px;">
+    <b>Sign in to use this network.</b> New here?
+    <a href="{{ url_for('main.register') }}">Register</a> — you'll need admin
+    approval before access is granted.
+  </p>
   <form method="POST">
-    <input name="username" placeholder="Username">
-    <input name="password" type="password" placeholder="Password">
-    <button type="submit">Login</button>
+    <input name="username" placeholder="Username" autocomplete="username">
+    <input name="password" type="password" placeholder="Password"
+           autocomplete="current-password">
+    <button type="submit">Sign In</button>
   </form>
-  <p>No account? <a href="{{ url_for('main.register') }}">Register</a></p>
+  <p style="font-size:.85em; color:#95a5a6;">
+    Your device must be recognized by the gateway to be granted access.
+  </p>
 </body>
 </html>

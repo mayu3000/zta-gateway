@@ -80,8 +80,9 @@ echo "[4/5] enabling forwarding and NAT out of $UPLINK"
 sysctl -qw net.ipv4.ip_forward=1
 iptables -t nat -C POSTROUTING -o "$UPLINK" -j MASQUERADE 2>/dev/null \
   || iptables -t nat -A POSTROUTING -o "$UPLINK" -j MASQUERADE
-iptables -C FORWARD -i "$AP_IFACE" -o "$UPLINK" -j ACCEPT 2>/dev/null \
-  || iptables -A FORWARD -i "$AP_IFACE" -o "$UPLINK" -j ACCEPT
+# NOTE: no blanket FORWARD ACCEPT -- the ZTA portal gate (app/enforcement/portal.py)
+# installs per-MAC rules in ZTA_FORWARD. Only the return path for established
+# connections is allowed here; new outbound connections must go through the gate.
 iptables -C FORWARD -i "$UPLINK" -o "$AP_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null \
   || iptables -A FORWARD -i "$UPLINK" -o "$AP_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
 

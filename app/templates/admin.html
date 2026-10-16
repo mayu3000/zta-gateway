@@ -85,7 +85,8 @@
     <tr>
       <th>User</th><th>Device</th><th>MAC</th>
       <th>Identity</th><th>Device</th><th>Network</th><th>Behavior</th>
-      <th>Total</th><th>Level</th><th>Status</th><th>Flagged Domains</th>
+      <th>Total</th><th>Level</th><th>Status</th><th>Access</th>
+      <th>Flagged Domains</th>
       <th>Fan-out</th><th>Baseline</th><th>Traceback</th>
     </tr>
     {% for d in devices %}
@@ -101,6 +102,23 @@
       <td><b>{{ d.total_risk }}</b></td>
       <td>{{ d.risk_level }}</td>
       <td>{{ d.status }}</td>
+      <td>
+        {% set ns = namespace(access='-') %}
+        {% for s in sessions %}
+          {% if s.mac == d.mac and s.state == 'granted' %}
+            {% set ns.access = 'granted (' + s.username + ')' %}
+          {% elif s.mac == d.mac %}
+            {% set ns.access = s.state %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.access }}
+        {% if d.status != 'banned' and ns.access.startswith('granted') %}
+        <form method="post" action="{{ url_for('main.revoke_access', mac=d.mac) }}"
+              style="display:inline; margin-left:6px;">
+          <button type="submit" class="revoke" style="background:#c0392b; font-size:.8em; padding:2px 8px;">Revoke</button>
+        </form>
+        {% endif %}
+      </td>
       <td>{{ d.flagged_domains or '-' }}</td>
       <td>{{ d.fan_out }}</td>
       <td>
