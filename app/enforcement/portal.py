@@ -69,6 +69,21 @@ def _ensure_nat_chain():
         _run(["iptables", "-t", "nat", "-I", "PREROUTING", "1", "-j", NAT_CHAIN])
 
 
+def _ensure_default_drops():
+    """Keep exactly one default DROP per interface, always as the LAST rules.
+
+    iptables is first-match-wins, so a per-MAC ACCEPT (grant) is only effective
+    if it sits *above* the catch-all DROP. Every time a ban or grant is added we
+    delete and re-append the default DROP, which moves it back to the end of the
+    chain and leaves the freshly added ACCEPT/DROP rules ahead of it.
+    """
+    for iface in cfg.INTERNAL_IFACES:
+        # Delete if present (a no-op/ignored error if it is not).
+        _run(["iptables", "-D", FORWARD_CHAIN, "-i", iface, "-j", "DROP"])
+        # Re-append so it is last again.
+        _run(["iptables", "-A", FORWARD_CHAIN, "-i", iface, "-j", "DROP"])
+
+
 def setup_gate():
     """Set up the complete portal gate. Idempotent.
 
@@ -88,16 +103,11 @@ def setup_gate():
     _ensure_nat_chain()
 
     # --- FORWARD chain ---
-    for iface in cfg.INTERNAL_IFACES:
-        # 1. Banned MACs DROP (filled by sync_bans)
-        # (bans are added individually by sync_bans)
-
-        # 2. Granted MACs ACCEPT (filled by grant_access)
-        # (grants are added individually by grant_access)
-
-        # 3. Default DROP for this interface
-        _run(["iptables", "-A", FORWARD_CHAIN,
-              "-i", iface, "-j", "DROP"])
+    # Order per interface is: banned DROP  >  granted ACCEPT  >  default DROP.
+    # Bans are inserted at the top by sync_bans(); grants are appended by
+    # grant_access(); both then call _ensure_default_drops() so the catch-all
+    # DROP always ends up last (and thus never shadows a granted ACCEPT).
+    _ensure_default_drops()
 
     # --- nat PREROUTING chain ---
     for iface in cfg.INTERNAL_IFACES:
@@ -158,6 +168,10 @@ def grant_access(mac):
                   "-p", "tcp", "--dport", "80",
                   "-j", "RETURN"])
 
+    # Push the catch-all DROP back to the end so the ACCEPT above stays
+    # reachable (first-match-wins).
+    _ensure_default_drops()
+
     log.info("[portal] grant_access: %s", mac)
 
 
@@ -196,33 +210,43 @@ def is_granted(mac):
 # --- ban sync -----------------------------------------------------------------
 
 def sync_bans(active_ban_macs):
-    """Re-add DROP rules for all currently banned MACs. Idempotent.
+    """Reconcile ban DROP rules in ZTA_FORWARD. Idempotent.
 
-    Removes old ban DROPs first, then re-adds from the provided set.
+    Removes the existing per-MAC ban DROPs and re-inserts the current set at the
+    TOP of the chain so bans always outrank grants. Crucially this does **not**
+    flush the chain: a blanket `-F` would also wipe the ACCEPT grants added by
+    grant_access(), silently cutting off every already-signed-in device.
     """
     if not _enabled():
         return
 
-    # Flush and re-add ban DROPs at the top of ZTA_FORWARD
-    # (bans must sit above grants)
-    _run(["iptables", "-F", FORWARD_CHAIN])
+    # 1. Remove only the existing per-MAC ban DROPs (never the default DROP,
+    #    never the grant ACCEPTs).
+    ok, listing = _run(["iptables", "-S", FORWARD_CHAIN])
+    if ok:
+        for line in (listing or "").splitlines():
+            if "-m mac --mac-source" not in line:
+                continue                      # default DROP / jump / not ours
+            if not line.rstrip().endswith("-j DROP"):
+                continue                      # e.g. a grant ACCEPT
+            spec = line.split()
+            if spec and spec[0] in ("-A", "-I"):
+                spec = spec[1:]               # drop the action flag
+            if spec and spec[0] == FORWARD_CHAIN:
+                _run(["iptables", "-D"] + spec)
 
+    # 2. Insert the current bans at the top so they outrank grants.
     for mac in active_ban_macs:
         for iface in cfg.INTERNAL_IFACES:
             ok, _ = _run(["iptables", "-C", FORWARD_CHAIN,
                           "-i", iface, "-m", "mac", "--mac-source", mac,
                           "-j", "DROP"])
             if not ok:
-                _run(["iptables", "-A", FORWARD_CHAIN,
+                _run(["iptables", "-I", FORWARD_CHAIN, "1",
                       "-i", iface, "-m", "mac", "--mac-source", mac,
                       "-j", "DROP"])
 
-    # Re-add default DROP per interface
-    for iface in cfg.INTERNAL_IFACES:
-        ok, _ = _run(["iptables", "-C", FORWARD_CHAIN,
-                      "-i", iface, "-j", "DROP"])
-        if not ok:
-            _run(["iptables", "-A", FORWARD_CHAIN,
-                  "-i", iface, "-j", "DROP"])
+    # 3. Keep the catch-all DROP last.
+    _ensure_default_drops()
 
     log.info("[portal] sync_bans: %d banned MACs", len(active_ban_macs))

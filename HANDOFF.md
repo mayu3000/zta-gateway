@@ -20,7 +20,7 @@ on each branch shows its head commit._
 `portal-gate` → `email-warning`) and merges in `feature/demo-monitoring`. Only
 `app/routes.py` conflicted (kept both the portal probe routes and the demo
 JSON endpoints; combined the `json`/`re` imports and the forensic `LOG_PATH`
-import). `admin.html` and `.gitignore` auto-merged. All 124 tests pass.
+import). `admin.html` and `.gitignore` auto-merged. All 125 tests pass.
 
 ## Decisions already taken
 - Email delivery: **real Gmail SMTP** (details in local `.env`, gitignored — not in git).
@@ -33,10 +33,16 @@ import). `admin.html` and `.gitignore` auto-merged. All 124 tests pass.
 - **Email warning (Item 9):** live test on the gateway (email only reaches the owner, not the device).
 - **Demo monitoring:** live test of the feed + toast on the inline gateway.
 - **Merge:** DONE — see `integration/all-features` above.
-- **BUG (open, found during merge):** `app/enforcement/portal.py` → `sync_bans()`
-  begins with `iptables -F ZTA_FORWARD`, which flushes the chain and **wipes every
-  per-MAC ACCEPT grant** added by `grant_access()`. Adding a new ban therefore
-  silently cuts off all already-signed-in devices until they re-auth. Not yet fixed.
+- **BUG FIXED (2026-10-16, found during merge):** `app/enforcement/portal.py` had
+  two rule-ordering defects that meant the gate could never actually grant
+  internet: (1) `sync_bans()` began with `iptables -F ZTA_FORWARD`, wiping every
+  per-MAC ACCEPT grant added by `grant_access()`; (2) `grant_access()` *appended*
+  its ACCEPT **after** the catch-all DROP, so first-match-wins made it
+  unreachable. Fixed: `sync_bans()` now deletes only ban DROPs and inserts bans at
+  the top (never flushes), and both it and `grant_access()` call a new
+  `_ensure_default_drops()` that keeps the catch-all DROP last. Rule order is now
+  banned DROP > granted ACCEPT > default DROP. Regression test added:
+  `test_sync_bans_preserves_grants` (fails against the old code).
 - Bug fixed during `demo-monitoring`: in `app/routes.py` the view `revoke_access`
   shadowed the imported portal function → infinite recursion on unban (looked like a
   Windows C-stack crash). Fixed via `portal_revoke_access` alias; the merged branch
@@ -67,8 +73,8 @@ import). `admin.html` and `.gitignore` auto-merged. All 124 tests pass.
 - Kali inline: `sudo venv/bin/python run.py`.
 - Tests (run **sequentially**, they share `db/zta_test.db`): on
   `integration/all-features` → `tests/test_phase6.py` (26) · `tests/test_phase7.py`
-  (34) · `tests/test_integration.py` (35) · `tests/test_portal.py` (9) ·
-  `tests/test_notify.py` (20) = **124, all passing**.
+  (34) · `tests/test_integration.py` (35) · `tests/test_portal.py` (10) ·
+  `tests/test_notify.py` (20) = **125, all passing**.
   They are standalone scripts, not pytest — run `./venv/bin/python tests/<file>.py`.
   (`test_portal`/`test_notify` are unittest-style; the 95-count suites print `TOTAL`.)
 

@@ -173,6 +173,30 @@ class PortalFirewallTests(unittest.TestCase):
         grant_access("aa:bb:cc:dd:ee:ff")
         self.assertTrue(is_granted("aa:bb:cc:dd:ee:ff"))
 
+    @patch("app.enforcement.portal._run")
+    def test_sync_bans_preserves_grants(self, mock_run):
+        """Regression: adding a ban must not wipe existing access grants.
+
+        Previously sync_bans() began with `iptables -F ZTA_FORWARD`, which also
+        removed every ACCEPT rule added by grant_access() — silently cutting off
+        every already-signed-in device.
+        """
+        fake, _, _ = _make_stateful_mock()
+        mock_run.side_effect = fake
+        from app.enforcement.portal import (
+            setup_gate, grant_access, sync_bans, is_granted,
+        )
+        setup_gate()
+        grant_access("11:22:33:44:55:66")
+        self.assertTrue(is_granted("11:22:33:44:55:66"))
+
+        sync_bans(["aa:bb:cc:dd:ee:ff"])          # ban a different device
+
+        self.assertTrue(
+            is_granted("11:22:33:44:55:66"),
+            "grant ACCEPT must survive sync_bans (no blanket chain flush)",
+        )
+
 
 class PortalSessionTests(unittest.TestCase):
     """Test session expiry and login grant logic."""
