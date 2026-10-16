@@ -67,8 +67,7 @@ written as `sent`/`failed` with the error; all wrapped in try/except with a
 
 ## Item 5 — Email sender and wording `[x]`
 `app/mail.py`: `send_risk_email(app, to, subject, body_text, body_html)` reusing
-the lab-mode fallback (console + `EMAIL_NOTICE` forensic entry); hard-coded
-sender/user/password were coincidentally also removed as a security improvement.
+the lab-mode fallback (console + `EMAIL_NOTICE` forensic entry).
 `get_last_notification()` added. Plain professional wording, no emoji, plain-text
 part always present.
 
