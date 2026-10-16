@@ -35,6 +35,13 @@ class Device(db.Model):
     first_seen = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), default="unknown")  # unknown/approved/banned
+    # Portal gate: link to the user who signed in on this device.
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    granted_at = db.Column(db.DateTime, nullable=True)
+    # Phase 10: admin-set contact address for risk/ban notices.
+    notify_email = db.Column(db.String(120), nullable=True)
+    # Consecutive scoring windows at MEDIUM (drives ZTA_NOTIFY_MIN_WINDOWS).
+    medium_streak = db.Column(db.Integer, default=0)
 
     # Phase 4 composite risk sub-scores (0-100)
     identity_risk = db.Column(db.Integer, default=0)
@@ -120,3 +127,27 @@ class BandwidthLog(db.Model):
     window_start = db.Column(db.DateTime, default=datetime.utcnow)
     bytes_sent = db.Column(db.Integer, default=0)
     bytes_received = db.Column(db.Integer, default=0)
+
+
+class PortalSession(db.Model):
+    """Phase 9 portal gate: one row per device sign-in session."""
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20), db.ForeignKey("device.mac"))
+    username = db.Column(db.String(80))
+    state = db.Column(db.String(20), default="granted")  # granted/expired/revoked
+    granted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_activity = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+
+class Notification(db.Model):
+    """Phase 10: audit trail of risk/ban warning emails (also drives cooldown)."""
+    id = db.Column(db.Integer, primary_key=True)
+    mac = db.Column(db.String(20), db.ForeignKey("device.mac"))
+    recipient = db.Column(db.String(120), nullable=True)
+    kind = db.Column(db.String(20))       # medium_warning | ban_notice
+    score = db.Column(db.Integer)
+    reason = db.Column(db.String(200))
+    status = db.Column(db.String(20))     # sent | failed | skipped
+    error = db.Column(db.String(300), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

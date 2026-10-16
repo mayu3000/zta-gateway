@@ -12,6 +12,7 @@ sys.path.insert(0, _ROOT)
 # may hold open), so this suite is self-contained and re-runnable. A stale
 # temp DB from an earlier run would otherwise fail duplicate-user (alice) checks.
 os.environ["ZTA_DB"] = "sqlite:///../db/zta_test.db"
+os.environ.setdefault("ZTA_ENFORCE", "recorded")  # no iptables under tests
 _db = os.path.join(_ROOT, "db", "zta_test.db")
 if os.path.exists(_db):
     os.remove(_db)

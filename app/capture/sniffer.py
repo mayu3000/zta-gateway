@@ -3,27 +3,46 @@
 Unlike Phase 1's *active* ARP scan — which can't receive other hosts' replies
 on this MinGW/Npcap stack — passive sniffing only listens, which Npcap handles
 cleanly. The picked interface auto-matches the adapter whose IP sits on the
-LAN subnet.
+LAN subnet (configurable via app/config.py; eth1 on the Kali inline gateway).
 """
 import ipaddress
 from datetime import datetime
 
 from scapy.all import sniff, IP, Ether, TCP, UDP, DNSQR, get_if_list, get_if_addr, conf
 
+from app import config as cfg
 from app.capture.buffer import packet_queue, queue_lock
 
 
-def _pick_interface(subnet="192.168.1.0/24"):
-    """Return the interface whose IP is on subnet, else Scapy's default."""
+def _pick_interface(subnet=cfg.INTERNAL_SUBNET):
+    """Return the interface whose IP is on subnet.
+
+    Falls back to the first non-loopback interface (keeps accidental Windows
+    local runs working when the configured subnet matches none), then
+    Scapy's default.
+    """
     net = ipaddress.ip_network(subnet, strict=False)
+    fallback = None
+    # Prefer the configured internal interface (eth1 or the Wi-Fi AP wlan0)
+    # when it exists and already holds an address on the internal subnet.
+    if cfg.INTERNAL_IFACE in get_if_list():
+        try:
+            if ipaddress.ip_address(get_if_addr(cfg.INTERNAL_IFACE)) in net:
+                return cfg.INTERNAL_IFACE
+        except Exception:
+            pass
     for iface in get_if_list():
         try:
             ip = get_if_addr(iface)
         except Exception:
             continue
-        if ip and ip != "0.0.0.0" and ipaddress.ip_address(ip) in net:
+        if not ip or ip == "0.0.0.0":
+            continue
+        if fallback is None and not ip.startswith("127."):
+            fallback = iface
+        if ipaddress.ip_address(ip) in net:
             return iface
-    return conf.iface
+    return fallback or conf.iface
 
 
 def handle_packet(pkt):
@@ -53,7 +72,7 @@ def handle_packet(pkt):
         packet_queue.append(record)
 
 
-def start_sniffing(iface=None, subnet="192.168.1.0/24"):
+def start_sniffing(iface=None, subnet=cfg.INTERNAL_SUBNET):
     if iface is None:
         iface = _pick_interface(subnet)
     print(f"[sniffer] listening on {iface}", flush=True)

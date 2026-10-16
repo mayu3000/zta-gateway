@@ -283,3 +283,131 @@ the honest limitations above scoped precisely for the reviewer.
 9. OWASP Authentication Cheat Sheet — session and password handling.
 10. Claude Code tool output / project run logs — implementation detail.
    *(Review-1 reference list reused; Welford + StevenBlack added.)*
+
+---
+
+## 13. Option A Validation (post-submission addendum, branch `feature/option-a-inline`)
+
+Work on the tagged `v1.0-final` submission continued after the main review
+build in the direction of the option that §8.3 and §9 left as "begun, not
+finished": a true inline gateway with firewall-level enforcement. This is
+supplementary material — the shipped submission remains Option B (ARP
+quarantine, recorded-only on Windows), and nothing on `main` changed.
+
+**What the branch ports**
+
+- **Enforcement (`app/enforcement/quarantine.py`)** — the primary path is now
+  `iptables`: a ban inserts `iptables -I FORWARD -s <ip> -j DROP`, unban deletes
+  it. The legacy ARP-spoof loop is preserved as `ZTA_ENFORCE=arp`. Enforcement
+  resolves at import: `ZTA_ENFORCE` (iptables|arp|recorded) wins, else
+  `iptables` on Linux-as-root, else recorded. `recorded` is the test/Windows
+  fallback — identical to the Option B behavior.
+- **Device discovery (`app/discovery.py`)** — on Linux the originally-designed
+  Scapy ARP broadcast scan (`scan_network_scapy`, deferred on Windows/MinGW)
+  is now the primary sensor, with the OS ping+neighbor-table path as fallback.
+  Ping flags are platform-branched (`-n 2 -w 400` vs `-c 2 -W 4`).
+- **MAC/address resolution (`app/capture/resolve.py`)** — parses the Linux
+  kernel neighbor table (`ip -o neigh show lladdr`) alongside the Windows
+  `arp -a` format.
+- **Deployment constants (`app/config.py`)** — new; consolidates the Kali
+  dual-NIC addresses (`192.168.50.0/24`, gateway `192.168.50.1`, `eth1`
+  internal / `eth0` uplink) replacing the scattered `192.168.1.x` literals.
+- **Sniffer (`app/capture/sniffer.py`)** — interface auto-pick now defaults to
+  the internal subnet so a bare `start_sniffing()` binds `eth1` on the Kali VM.
+- **Unban (`app/routes.py`)** — passes the device IP so the iptables rule can
+  be removed by address, not just MAC.
+
+**Test-mode guard.** Each suite sets `ZTA_ENFORCE=recorded`, so the 95-test
+suite runs unprivileged and never touches the kernel firewall — same behavior
+as the Windows build. The suite still passes 95/95 on this branch.
+
+**Honest status (unchanged from §8.3).** True Option A isolation on the wire
+still requires the Kali VM run as root (`sudo venv/bin/python run.py`), with
+real devices behind `eth1`. This branch is code-complete and Windows-verified,
+not yet Lab-verified; the §11 checklist ("Option A ... begun, not finished")
+remains accurate until a live hostapd-free wired E2E is run on the VM.
+
+## 14. Soak test — pilot-only record (2026-09-15)
+
+The unattended ≥ 4 h soak (checklist item §11) was *not* fully completed. The
+server ran overnight for ~57 minutes before the session ended and the process
+was stopped; evidence in `db/zta.db` before the run concluded: **422
+RiskHistory rows across 6 devices**, spanning 2026-09-14 23:57 → 2026-09-15
+00:54 (UTC+5:30), with a 55.9 MiB working-set baseline at 00:10 IST. This is
+adequate as a *pilot* (no crash over ~1 h, monotonic DB writes), but **no
+≥ 4 h stability verdict is claimed** — the checklist item stays open until a
+full unattended run is completed.
+
+## 15. Email warning on a risk rise (branch `feature/email-warning`)
+
+When a device's risk level rises from LOW to MEDIUM the gateway emails the
+device's owner a warning; when the device is actually blocked the owner gets a
+short ban notice. Email is the only channel: a gateway cannot push a
+notification onto a phone, and a blocked device cannot receive anything over
+the network.
+
+### 15.1 What triggers a warning
+
+| Trigger | Level | Notice |
+|---|---|---|
+| LOW → MEDIUM | score 35–69 | `Security notice: unusual activity on your device` |
+| MEDIUM → HIGH (or LOW → HIGH) | score ≥ 70 | `Your device has been blocked` |
+
+- Levels from `app/policy/scoring.py`: LOW below 35, MEDIUM 35–69, HIGH ≥ 70.
+  HIGH is also the ban line.
+- `ZTA_NOTIFY_MIN_WINDOWS` (default 1) sets how many *consecutive* MEDIUM
+  30-second windows are required before the first warning; `2` ignores a
+  one-window blip.
+- `ZTA_NOTIFY_COOLDOWN_MINUTES` (default 10) is the minimum gap between
+  warnings for the same device, enforced from the `Notification` audit table.
+- `ZTA_NOTIFY` (default 1) is the master switch; `ZTA_NOTIFY_BAN_NOTICE`
+  (default 1) enables the ban notice; `ZTA_NOTIFY_ADMIN_COPY` copies an admin
+  address on every notice. When `ZTA_NOTIFY=0` no notification code runs.
+
+### 15.2 Message wording
+
+The recipient is the signed-in user's email (from the portal gate), else the
+admin-set contact on the device. Each message names the device (hostname or the
+last 6 hex characters of the MAC), the time in IST, the current level, and one
+plain sentence describing the strongest signal — for example *"many connection
+attempts in a short time"* or *"repeated visits to websites on the gateway's
+blocklist"*. Raw domains, tokens and passwords are never included. A plain-text
+part is always sent; HTML is a simple, table-free layout.
+
+### 15.3 Audit table and background delivery
+
+Every attempt writes one `Notification` row
+(`mac, recipient, kind, score, reason, status, error, created_at`) with status
+`sent`, `failed` or `skipped` (no recipient configured). The row is the audit
+trail for the viva and the data behind the cooldown. The actual send runs in a
+daemon thread inside the app context and every error is caught, so scoring can
+never fail or slow down because of email; a thrown SMTP error produces a
+`failed` row and a `NOTIFY_FAILED` forensic entry, and the scoring result is
+unchanged. With no `MAIL_SERVER` configured the sender falls back to lab mode:
+the full message is printed to the console and written as an `EMAIL_NOTICE`
+forensic entry.
+
+### 15.4 Test results
+
+- `tests/test_notify.py` — 20 tests, all pass. Covers LOW→MEDIUM (one warning,
+  one `sent` row), second warning inside the cooldown (suppressed), MEDIUM→HIGH
+  and LOW→HIGH (ban notice only), no recipient (`skipped`), sender error
+  (`failed`, scoring unaffected), `ZTA_NOTIFY=0` (nothing runs),
+  `ZTA_NOTIFY_MIN_WINDOWS=2` (two consecutive windows), the admin contact route
+  (set / 403 for non-admin / invalid rejected / clear) and the dashboard.
+- The pre-existing suites still pass unchanged: `test_phase6.py` 26/26,
+  `test_phase7.py` 34/34, `test_portal.py` 9/9, `test_integration.py` 35/35.
+- Real Gmail SMTP verified 2026-10-16: a live warning was delivered and
+  rendered correctly, and the audit row was written as `sent`.
+
+### 15.5 Limits (honest)
+
+- A device that jumps from LOW straight to HIGH inside one 30-second window
+  skips MEDIUM and gets only the ban notice. A device first seen already at
+  MEDIUM or HIGH (no previous level) gets no medium warning.
+- The warning reaches the owner's email, not the device screen, and depends on
+  the owner reading it.
+- Email addresses are personal data: they are stored in the database and only
+  the administrator can see them.
+- The thresholds (35 and 70), the cooldown and the window count are design
+  choices, not proven optimal.

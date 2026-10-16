@@ -1,18 +1,27 @@
+import json
+import re
 import secrets
 from functools import wraps
 
 from flask import (Blueprint, render_template, request, redirect, session,
-                   url_for, flash, current_app)
+                   url_for, flash, current_app, jsonify)
 from werkzeug.security import check_password_hash, generate_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from .models import User, Device, AuthEvent, Ban, db
+from . import config as cfg
+from .models import User, Device, AuthEvent, Ban, PortalSession, Notification, db
 from .enforcement.quarantine import release_device
-from .logging.forensic import log_forensic_event
+from .enforcement.portal import grant_access, revoke_access as portal_revoke_access
+from .capture.resolve import get_mac_for_ip
+from .logging.forensic import log_forensic_event, LOG_PATH
 from .traceback.tracer import reconstruct_timeline
 from .mail import send_verification_email
 
 main = Blueprint("main", __name__)
+
+# Simple address check for the admin-set device contact (Phase 10).
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 # --- auth guards -----------------------------------------------------------
@@ -62,6 +71,32 @@ def login():
         if user.status != "approved":
             return "Your account is pending admin approval.", 403
         session["user"] = user.username
+
+        # Portal gate: resolve MAC and grant network access.
+        if cfg.PORTAL_GATE and request.remote_addr != "127.0.0.1":
+            mac = get_mac_for_ip(request.remote_addr)
+            if mac:
+                device = Device.query.filter_by(mac=mac).first()
+                if device:
+                    device.user_id = user.id
+                    device.status = "approved"
+                    device.granted_at = datetime.utcnow()
+                    ps = PortalSession(
+                        mac=mac, username=user.username,
+                        state="granted",
+                        expires_at=datetime.utcnow() + timedelta(
+                            minutes=cfg.SESSION_TTL_MINUTES),
+                    )
+                    db.session.add(ps)
+                    db.session.commit()
+                    grant_access(mac)
+                    log_forensic_event(mac, "GRANT_ACCESS",
+                                        f"User {user.username} signed in")
+                else:
+                    log_forensic_event(
+                        request.remote_addr, "GRANT_ACCESS_FAIL",
+                        f"User {user.username} signed in but MAC {mac} "
+                        f"has no device record")
         return redirect(url_for("main.admin_dashboard"))
     return render_template("login.html")
 
@@ -158,7 +193,13 @@ def reject_user(user_id):
 @main.route("/admin")
 @admin_required
 def admin_dashboard():
-    devices = Device.query.all()
+    # "Connected" = seen by the discovery sensor recently. Devices that left the
+    # network age out after CONNECTED_TTL_SECONDS, but a banned device always
+    # stays listed so the table matches the Active Bans tile.
+    cutoff = datetime.utcnow() - timedelta(seconds=cfg.CONNECTED_TTL_SECONDS)
+    devices = (Device.query
+               .filter(or_(Device.last_seen >= cutoff, Device.status == "banned"))
+               .all())
     active_bans = Ban.query.filter_by(active=True).order_by(Ban.since.desc()).all()
     pending = User.query.filter_by(status="pending").all()
     recent_events = (AuthEvent.query
@@ -172,11 +213,53 @@ def admin_dashboard():
         "active_bans": len(active_bans),
         "pending_users": len(pending),
     }
+    sessions = PortalSession.query.filter_by(state="granted").all()
+    # Phase 10: recent risk/ban notices + which devices were warned recently.
+    notifications = (Notification.query
+                     .order_by(Notification.created_at.desc())
+                     .limit(25).all())
+    warn_cutoff = datetime.utcnow() - timedelta(hours=24)
+    warned_macs = {n.mac for n in notifications
+                   if n.kind == "medium_warning"
+                   and n.created_at and n.created_at >= warn_cutoff}
     return render_template("admin.html", devices=devices,
                            active_bans=active_bans,
                            recent_events=recent_events,
                            pending_users=pending,
+                           sessions=sessions,
+                           notifications=notifications,
+                           warned_macs=warned_macs,
                            stats=stats)
+
+
+@main.route("/admin/device/<mac>/contact", methods=["POST"])
+@admin_required
+def set_device_contact(mac):
+    """Set or clear the contact email used for risk/ban notices (Phase 10)."""
+    device = Device.query.filter_by(mac=mac).first()
+    if not device:
+        return "Device not found", 404
+    address = request.form.get("notify_email", "").strip()
+    if address and not _EMAIL_RE.match(address):
+        flash("Invalid email address — not saved.")
+        return redirect(url_for("main.admin_dashboard"))
+    device.notify_email = address or None
+    db.session.commit()
+    log_forensic_event(mac, "SET_CONTACT",
+                       {"notify_email": address or None})
+    return redirect(url_for("main.admin_dashboard"))
+
+
+@main.route("/admin/revoke/<mac>", methods=["POST"])
+@admin_required
+def revoke_access(mac):
+    ps = PortalSession.query.filter_by(mac=mac, state="granted").first()
+    if ps:
+        ps.state = "revoked"
+        db.session.commit()
+    portal_revoke_access(mac)
+    log_forensic_event(mac, "REVOKE_ACCESS", "Admin revoked access")
+    return redirect(url_for("main.admin_dashboard"))
 
 
 # Backwards-compat: the Phase 1-5 dashboard now lives at /admin.
@@ -193,12 +276,21 @@ def unban(mac):
     if ban:
         ban.active = False
         ban.unbanned_at = datetime.utcnow()
-    release_device(mac)
     device = Device.query.filter_by(mac=mac).first()
     if device:
+        release_device(device.ip, mac)
         # Zero-trust choice: unban does NOT restore approval — it resets to
         # "unknown" so the device has to re-earn trust from scratch.
         device.status = "unknown"
+        device.user_id = None
+        device.granted_at = None
+    else:
+        release_device(None, mac)
+    # Revoke any portal session for this MAC.
+    ps = PortalSession.query.filter_by(mac=mac, state="granted").first()
+    if ps:
+        ps.state = "revoked"
+    portal_revoke_access(mac)
     db.session.commit()
     log_forensic_event(mac, "UNBAN", "Released from quarantine (status -> unknown)")
     return redirect(url_for("main.admin_dashboard"))
@@ -213,5 +305,67 @@ def traceback_view(mac):
 
 @main.route("/logout")
 def logout():
+    # Portal gate: revoke access for the session's devices before clearing.
+    if cfg.PORTAL_GATE and request.remote_addr != "127.0.0.1":
+        mac = get_mac_for_ip(request.remote_addr)
+        if mac:
+            portal_revoke_access(mac)
+            ps = PortalSession.query.filter_by(
+                mac=mac, state="granted").first()
+            if ps:
+                ps.state = "revoked"
+                db.session.commit()
+            log_forensic_event(mac, "REVOKE_ACCESS",
+                                "User logged out")
     session.clear()
     return redirect(url_for("main.login"))
+
+
+# --- captive portal probes -------------------------------------------------
+# OS captive-portal detection hits specific probe domains (dnsmasq resolves
+# them to the gateway). Responding with something other than the expected
+# response makes the OS pop its native sign-in page. Works for:
+#   /generate_204          – Android / ChromeOS (expects empty 204)
+#   /connecttest.txt       – Windows (expects "Microsoft Connect Test")
+#   /hotspot-detect.html  – Apple (expects a "Success" HTML page)
+
+
+@main.route("/generate_204")
+@main.route("/connecttest.txt")
+@main.route("/hotspot-detect.html")
+def captive_probe():
+    return redirect(url_for("main.login"))
+
+
+# --- Demo monitoring (display-only) ----------------------------------------
+# Two additive, read-only JSON endpoints for the dashboard's live event feed
+# and ban toast. They change nothing in scoring, baseline or enforcement; they
+# only expose existing data.
+
+@main.route("/api/recent-events")
+def recent_events():
+    """Last 15 forensic log entries, newest first (dashboard live feed)."""
+    if "user" not in session:
+        return jsonify([]), 401
+    events = []
+    try:
+        with open(LOG_PATH) as f:
+            lines = f.readlines()[-15:]
+        for line in reversed(lines):
+            try:
+                events.append(json.loads(line))
+            except (ValueError, TypeError):
+                continue          # skip a torn/blank trailing line
+    except FileNotFoundError:
+        pass
+    return jsonify(events)
+
+
+@main.route("/api/device-status")
+def device_status_api():
+    """Minimal per-device risk snapshot for the ban toast."""
+    if "user" not in session:
+        return jsonify([]), 401
+    devices = Device.query.all()
+    return jsonify([{"mac": d.mac, "risk_level": d.risk_level}
+                    for d in devices])
