@@ -55,3 +55,21 @@ SESSION_TTL_MINUTES = int(os.environ.get("ZTA_SESSION_TTL_MINUTES", "30"))
 # The URL the port-80 redirect listener sends unauthenticated devices to.
 PORTAL_URL = os.environ.get(
     "ZTA_PORTAL_URL", "http://192.168.50.1:5000/login")
+
+# --- Email warnings (Phase 10) ----------------------------------------------
+# Master switch: when 0 no notification code runs (keeps the 95 tests unchanged).
+NOTIFY = bool(int(os.environ.get("ZTA_NOTIFY", "1")))
+
+# Minimum gap between warnings for the same device (minutes).
+NOTIFY_COOLDOWN_MINUTES = int(os.environ.get(
+    "ZTA_NOTIFY_COOLDOWN_MINUTES", "10"))
+
+# Consecutive MEDIUM scoring windows (30s each) required before warning.
+# 1 = warn on the first MEDIUM window.
+NOTIFY_MIN_WINDOWS = int(os.environ.get("ZTA_NOTIFY_MIN_WINDOWS", "1"))
+
+# Also email the owner when the device is banned.
+NOTIFY_BAN_NOTICE = bool(int(os.environ.get("ZTA_NOTIFY_BAN_NOTICE", "1")))
+
+# Optional admin address copied on every notice (empty = no copy).
+NOTIFY_ADMIN_COPY = os.environ.get("ZTA_NOTIFY_ADMIN_COPY", "")

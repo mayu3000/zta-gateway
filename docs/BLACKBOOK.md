@@ -337,3 +337,75 @@ RiskHistory rows across 6 devices**, spanning 2026-09-14 23:57 → 2026-09-15
 adequate as a *pilot* (no crash over ~1 h, monotonic DB writes), but **no
 ≥ 4 h stability verdict is claimed** — the checklist item stays open until a
 full unattended run is completed.
+
+## 15. Email warning on a risk rise (branch `feature/email-warning`)
+
+When a device's risk level rises from LOW to MEDIUM the gateway emails the
+device's owner a warning; when the device is actually blocked the owner gets a
+short ban notice. Email is the only channel: a gateway cannot push a
+notification onto a phone, and a blocked device cannot receive anything over
+the network.
+
+### 15.1 What triggers a warning
+
+| Trigger | Level | Notice |
+|---|---|---|
+| LOW → MEDIUM | score 35–69 | `Security notice: unusual activity on your device` |
+| MEDIUM → HIGH (or LOW → HIGH) | score ≥ 70 | `Your device has been blocked` |
+
+- Levels from `app/policy/scoring.py`: LOW below 35, MEDIUM 35–69, HIGH ≥ 70.
+  HIGH is also the ban line.
+- `ZTA_NOTIFY_MIN_WINDOWS` (default 1) sets how many *consecutive* MEDIUM
+  30-second windows are required before the first warning; `2` ignores a
+  one-window blip.
+- `ZTA_NOTIFY_COOLDOWN_MINUTES` (default 10) is the minimum gap between
+  warnings for the same device, enforced from the `Notification` audit table.
+- `ZTA_NOTIFY` (default 1) is the master switch; `ZTA_NOTIFY_BAN_NOTICE`
+  (default 1) enables the ban notice; `ZTA_NOTIFY_ADMIN_COPY` copies an admin
+  address on every notice. When `ZTA_NOTIFY=0` no notification code runs.
+
+### 15.2 Message wording
+
+The recipient is the signed-in user's email (from the portal gate), else the
+admin-set contact on the device. Each message names the device (hostname or the
+last 6 hex characters of the MAC), the time in IST, the current level, and one
+plain sentence describing the strongest signal — for example *"many connection
+attempts in a short time"* or *"repeated visits to websites on the gateway's
+blocklist"*. Raw domains, tokens and passwords are never included. A plain-text
+part is always sent; HTML is a simple, table-free layout.
+
+### 15.3 Audit table and background delivery
+
+Every attempt writes one `Notification` row
+(`mac, recipient, kind, score, reason, status, error, created_at`) with status
+`sent`, `failed` or `skipped` (no recipient configured). The row is the audit
+trail for the viva and the data behind the cooldown. The actual send runs in a
+daemon thread inside the app context and every error is caught, so scoring can
+never fail or slow down because of email; a thrown SMTP error produces a
+`failed` row and a `NOTIFY_FAILED` forensic entry, and the scoring result is
+unchanged. With no `MAIL_SERVER` configured the sender falls back to lab mode:
+the full message is printed to the console and written as an `EMAIL_NOTICE`
+forensic entry.
+
+### 15.4 Test results
+
+- `tests/test_notify.py` — 20 tests, all pass. Covers LOW→MEDIUM (one warning,
+  one `sent` row), second warning inside the cooldown (suppressed), MEDIUM→HIGH
+  and LOW→HIGH (ban notice only), no recipient (`skipped`), sender error
+  (`failed`, scoring unaffected), `ZTA_NOTIFY=0` (nothing runs),
+  `ZTA_NOTIFY_MIN_WINDOWS=2` (two consecutive windows), the admin contact route
+  (set / 403 for non-admin / invalid rejected / clear) and the dashboard.
+- The pre-existing suites still pass unchanged: `test_phase6.py` 26/26,
+  `test_phase7.py` 34/34, `test_portal.py` 9/9, `test_integration.py` 35/35.
+
+### 15.5 Limits (honest)
+
+- A device that jumps from LOW straight to HIGH inside one 30-second window
+  skips MEDIUM and gets only the ban notice. A device first seen already at
+  MEDIUM or HIGH (no previous level) gets no medium warning.
+- The warning reaches the owner's email, not the device screen, and depends on
+  the owner reading it.
+- Email addresses are personal data: they are stored in the database and only
+  the administrator can see them.
+- The thresholds (35 and 70), the cooldown and the window count are design
+  choices, not proven optimal.

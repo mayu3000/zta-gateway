@@ -48,6 +48,7 @@ def run_scoring_window(app):
     from app.enforcement.quarantine import quarantine_device, ENFORCEMENT_MODE
     from app.logging.forensic import log_forensic_event
     from app import config as cfg
+    from app.notify import notify_medium, notify_ban
     from app.models import (db, Device, Ban, RiskHistory, DNSLog,
                            BandwidthLog)
 
@@ -68,6 +69,12 @@ def run_scoring_window(app):
             level = risk_level(total)
             prev_level = device.risk_level
             prev_status = device.status
+
+            # Phase 10: count consecutive MEDIUM windows (ZTA_NOTIFY_MIN_WINDOWS).
+            if level == "MEDIUM":
+                device.medium_streak = (device.medium_streak or 0) + 1
+            else:
+                device.medium_streak = 0
 
             device.identity_risk = result["identity"]
             device.device_risk = result["device"]
@@ -105,6 +112,14 @@ def run_scoring_window(app):
                     mac, "RISK_TRANSITION",
                     f"{prev_level} -> {level} (total {total})")
 
+            # Phase 10: decide whether to warn the owner on rising into MEDIUM.
+            # A device that jumps straight to HIGH (skipping MEDIUM) gets only
+            # the ban notice. A device first seen already at MEDIUM/HIGH has no
+            # previous level and therefore gets no medium warning (documented).
+            warn_medium = (
+                level == "MEDIUM" and prev_level in ("LOW", "MEDIUM")
+                and (device.medium_streak or 0) >= cfg.NOTIFY_MIN_WINDOWS)
+
             banned_now = False
             existing_ban = Ban.query.filter_by(mac=mac, active=True).first()
             threshold = effective_ban_threshold(HIGH_RISK_BAN_THRESHOLD, mac)
@@ -132,8 +147,18 @@ def run_scoring_window(app):
                      "effective_threshold": round(threshold, 2),
                      "reason": f"Composite risk score {total} classified HIGH",
                      "enforcement_mode": mode})
+                # Phase 10: ban notice to the owner (background, best-effort).
+                notify_ban(app, device, total,
+                           "activity classified as HIGH risk "
+                           "(connection attempts and/or blocklisted sites)")
             else:
                 db.session.commit()
+
+            # Phase 10: send the medium warning only AFTER the scoring
+            # transaction is committed, so the background send never races the
+            # window's writes (matters for SQLite's file lock).
+            if warn_medium:
+                notify_medium(app, device, total, result)
 
             if prev_status != device.status and device.status in (
                     "banned", "unknown"):

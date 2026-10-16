@@ -1,3 +1,4 @@
+import re
 import secrets
 from functools import wraps
 
@@ -8,15 +9,18 @@ from datetime import datetime, timedelta
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from . import config as cfg
-from .models import User, Device, AuthEvent, Ban, PortalSession, db
+from .models import User, Device, AuthEvent, Ban, PortalSession, Notification, db
 from .enforcement.quarantine import release_device
-from .enforcement.portal import grant_access, revoke_access
+from .enforcement.portal import grant_access, revoke_access as portal_revoke_access
 from .capture.resolve import get_mac_for_ip
 from .logging.forensic import log_forensic_event
 from .traceback.tracer import reconstruct_timeline
 from .mail import send_verification_email
 
 main = Blueprint("main", __name__)
+
+# Simple address check for the admin-set device contact (Phase 10).
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 # --- auth guards -----------------------------------------------------------
@@ -209,12 +213,40 @@ def admin_dashboard():
         "pending_users": len(pending),
     }
     sessions = PortalSession.query.filter_by(state="granted").all()
+    # Phase 10: recent risk/ban notices + which devices were warned recently.
+    notifications = (Notification.query
+                     .order_by(Notification.created_at.desc())
+                     .limit(25).all())
+    warn_cutoff = datetime.utcnow() - timedelta(hours=24)
+    warned_macs = {n.mac for n in notifications
+                   if n.kind == "medium_warning"
+                   and n.created_at and n.created_at >= warn_cutoff}
     return render_template("admin.html", devices=devices,
                            active_bans=active_bans,
                            recent_events=recent_events,
                            pending_users=pending,
                            sessions=sessions,
+                           notifications=notifications,
+                           warned_macs=warned_macs,
                            stats=stats)
+
+
+@main.route("/admin/device/<mac>/contact", methods=["POST"])
+@admin_required
+def set_device_contact(mac):
+    """Set or clear the contact email used for risk/ban notices (Phase 10)."""
+    device = Device.query.filter_by(mac=mac).first()
+    if not device:
+        return "Device not found", 404
+    address = request.form.get("notify_email", "").strip()
+    if address and not _EMAIL_RE.match(address):
+        flash("Invalid email address — not saved.")
+        return redirect(url_for("main.admin_dashboard"))
+    device.notify_email = address or None
+    db.session.commit()
+    log_forensic_event(mac, "SET_CONTACT",
+                       {"notify_email": address or None})
+    return redirect(url_for("main.admin_dashboard"))
 
 
 @main.route("/admin/revoke/<mac>", methods=["POST"])
@@ -224,7 +256,7 @@ def revoke_access(mac):
     if ps:
         ps.state = "revoked"
         db.session.commit()
-    revoke_access(mac)
+    portal_revoke_access(mac)
     log_forensic_event(mac, "REVOKE_ACCESS", "Admin revoked access")
     return redirect(url_for("main.admin_dashboard"))
 
@@ -257,7 +289,7 @@ def unban(mac):
     ps = PortalSession.query.filter_by(mac=mac, state="granted").first()
     if ps:
         ps.state = "revoked"
-    revoke_access(mac)
+    portal_revoke_access(mac)
     db.session.commit()
     log_forensic_event(mac, "UNBAN", "Released from quarantine (status -> unknown)")
     return redirect(url_for("main.admin_dashboard"))
@@ -276,7 +308,7 @@ def logout():
     if cfg.PORTAL_GATE and request.remote_addr != "127.0.0.1":
         mac = get_mac_for_ip(request.remote_addr)
         if mac:
-            revoke_access(mac)
+            portal_revoke_access(mac)
             ps = PortalSession.query.filter_by(
                 mac=mac, state="granted").first()
             if ps:

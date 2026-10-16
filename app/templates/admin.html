@@ -86,6 +86,7 @@
       <th>User</th><th>Device</th><th>MAC</th>
       <th>Identity</th><th>Device</th><th>Network</th><th>Behavior</th>
       <th>Total</th><th>Level</th><th>Status</th><th>Access</th>
+      <th>Contact</th><th>Warned</th>
       <th>Flagged Domains</th>
       <th>Fan-out</th><th>Baseline</th><th>Traceback</th>
     </tr>
@@ -119,6 +120,20 @@
         </form>
         {% endif %}
       </td>
+      <td>
+        <form method="post"
+              action="{{ url_for('main.set_device_contact', mac=d.mac) }}"
+              style="display:flex; gap:4px;">
+          <input name="notify_email" value="{{ d.notify_email or '' }}"
+                 placeholder="not set"
+                 style="width:150px; font-size:.85em; padding:2px 4px;">
+          <button type="submit"
+                  style="background:#2980b9; font-size:.8em; padding:2px 8px;">Set</button>
+        </form>
+      </td>
+      <td>
+        {% if d.mac in warned_macs %}<span class="badge">Warned</span>{% else %}-{% endif %}
+      </td>
       <td>{{ d.flagged_domains or '-' }}</td>
       <td>{{ d.fan_out }}</td>
       <td>
@@ -133,7 +148,7 @@
       <td><a href="{{ url_for('main.traceback_view', mac=d.mac) }}">timeline</a></td>
     </tr>
     {% else %}
-    <tr><td colspan="14" class="empty">No devices discovered yet.</td></tr>
+    <tr><td colspan="17" class="empty">No devices discovered yet.</td></tr>
     {% endfor %}
   </table>
 
@@ -155,6 +170,25 @@
     </tr>
     {% else %}
     <tr><td colspan="5" class="empty">No active bans</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Recent Notifications</h2>
+  <table>
+    <tr><th>Time</th><th>Device</th><th>Recipient</th><th>Kind</th>
+        <th>Score</th><th>Status</th><th>Reason</th></tr>
+    {% for n in notifications %}
+    <tr class="{{ 'success' if n.status == 'sent' else ('failed' if n.status == 'failed' else '') }}">
+      <td>{{ n.created_at }}</td>
+      <td>{{ n.mac }}</td>
+      <td>{{ n.recipient or '-' }}</td>
+      <td>{{ n.kind }}</td>
+      <td>{{ n.score }}</td>
+      <td><b>{{ n.status }}</b></td>
+      <td>{{ n.reason or '-' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">No notifications sent yet.</td></tr>
     {% endfor %}
   </table>
 
