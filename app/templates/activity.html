@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Website Activity — {{ device.mac }}</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; background: #f5f6f8;
+           padding-bottom: 40px; }
+    nav { background: #2c3e50; padding: 12px 20px; }
+    nav a { color: #ecf0f1; margin-right: 18px; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    .badge { background: #e74c3c; color: #fff; border-radius: 10px;
+             padding: 1px 8px; font-size: .8em; margin-left: 4px; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 20px; }
+    h1 { color: #2c3e50; }
+    h2 { color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 6px; }
+    table { border-collapse: collapse; width: 100%; background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #eee;
+             font-size: .92em; }
+    th { background: #2c3e50; color: #fff; }
+    tr:nth-child(even) { background: #fafafa; }
+    tr.flagged { background: #fdecea; font-weight: bold; }
+    .note { background: #fff8e1; border-left: 4px solid #f0ad4e;
+            padding: 10px 14px; margin: 16px 0; font-size: .9em; }
+    .muted { color: #666; font-size: .9em; }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{{ url_for('main.admin_dashboard') }}">Dashboard</a>
+  <a href="{{ url_for('main.pending_users') }}">Pending Users</a>
+  <a href="{{ url_for('main.logout') }}">Logout</a>
+</nav>
+<div class="wrap">
+<h1>Website Activity — {{ device.hostname or device.mac }}</h1>
+<p>
+  <a href="{{ url_for('main.admin_dashboard') }}">&laquo; Back to dashboard</a>
+  &nbsp;|&nbsp;
+  <a href="{{ url_for('main.traceback_view', mac=device.mac) }}">Risk timeline</a>
+</p>
+
+<table>
+  <tr>
+    <th>MAC</th><th>IP</th><th>Status</th><th>Risk</th>
+    <th>Domains resolved</th><th>Flagged</th><th>Bytes observed</th>
+  </tr>
+  <tr>
+    <td>{{ device.mac }}</td>
+    <td>{{ device.ip or '-' }}</td>
+    <td>{{ device.status }}</td>
+    <td>{{ device.risk_level }} ({{ device.total_risk }})</td>
+    <td>{{ dns_total }}</td>
+    <td>{{ flagged_total }}</td>
+    <td>{{ bytes_total }}</td>
+  </tr>
+</table>
+
+<div class="note">
+  The gateway sees the <b>DNS name</b> a device asks for, not the URL or page
+  content. Encrypted DNS (DoH/DoT) is not visible. One row per domain per
+  30-second scoring window.
+</div>
+
+<h2>Top domains</h2>
+<table id="top-domains" data-rows="{{ top|length }}">
+  <tr><th>Domain</th><th>Windows seen</th><th>Flagged</th></tr>
+  {% for row in top %}
+  <tr class="{{ 'flagged' if row.flagged else '' }}">
+    <td>{{ row.domain }}</td>
+    <td>{{ row.hits }}</td>
+    <td>{% if row.flagged %}<span class="badge">blocklisted</span>{% else %}-{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">No DNS activity recorded yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Recent lookups <span class="muted">(last {{ limit }})</span></h2>
+<table id="recent-lookups" data-rows="{{ lookups|length }}">
+  <tr><th>Time (UTC)</th><th>Domain</th><th>Flagged</th></tr>
+  {% for row in lookups %}
+  <tr class="{{ 'flagged' if row.flagged else '' }}">
+    <td>{{ row.timestamp }}</td>
+    <td>{{ row.domain }}</td>
+    <td>{% if row.flagged %}<span class="badge">blocklisted</span>{% else %}-{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">No DNS activity recorded yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Bandwidth per window <span class="muted">(last {{ limit }})</span></h2>
+<table id="bandwidth" data-rows="{{ windows|length }}">
+  <tr><th>Window start (UTC)</th><th>Bytes sent</th><th>Bytes received</th></tr>
+  {% for row in windows %}
+  <tr>
+    <td>{{ row.window_start }}</td>
+    <td>{{ row.bytes_sent }}</td>
+    <td>{{ row.bytes_received }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">No traffic recorded yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+</body>
+</html>

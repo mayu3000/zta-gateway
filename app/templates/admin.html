@@ -96,7 +96,7 @@
       <th>Total</th><th>Level</th><th>Status</th><th>Access</th>
       <th>Contact</th><th>Warned</th>
       <th>Flagged Domains</th>
-      <th>Fan-out</th><th>Baseline</th><th>Traceback</th>
+      <th>Fan-out</th><th>Baseline</th><th>Traceback / Activity</th>
     </tr>
     {% for d in devices %}
     <tr style="background-color:
@@ -153,7 +153,9 @@
           No data yet
         {% endif %}
       </td>
-      <td><a href="{{ url_for('main.traceback_view', mac=d.mac) }}">timeline</a></td>
+      <td><a href="{{ url_for('main.traceback_view', mac=d.mac) }}">timeline</a>
+        &middot;
+        <a href="{{ url_for('main.activity_view', mac=d.mac) }}">activity</a></td>
     </tr>
     {% else %}
     <tr><td colspan="17" class="empty">No devices discovered yet.</td></tr>

@@ -32,7 +32,8 @@ if os.path.exists(_db_abs):
     os.remove(_db_abs)
 
 from app import create_app, config as cfg
-from app.models import db, Ban, Device, PortalSession, User
+from app.models import db, Ban, Device, PortalSession, User, DNSLog, BandwidthLog
+from werkzeug.security import generate_password_hash
 
 
 def _make_stateful_mock():
@@ -362,6 +363,94 @@ class MigrationTests(_Base):
                 os.environ.pop("ZTA_DB", None)
             else:
                 os.environ["ZTA_DB"] = prev
+
+
+class ActivityPageTests(_Base):
+    """F7.4: the read-only per-device website activity page."""
+
+    MAC = "aa:bb:cc:dd:ee:20"
+
+    def setUp(self):
+        super().setUp()
+        self.admin = self.app.test_client()
+        self.admin.post("/login",
+                        data={"username": "admin", "password": "admin123"})
+
+    def _seed(self, lookups=3, windows=2):
+        with self.app.app_context():
+            db.session.add(Device(mac=self.MAC, ip="192.168.50.20",
+                                  hostname="friend-pc", status="approved",
+                                  risk_level="MEDIUM", total_risk=48))
+            for i in range(lookups):
+                domain = "doubleclick.net" if i % 3 == 2 else "example.com"
+                db.session.add(DNSLog(mac=self.MAC, domain=domain,
+                                      flagged=domain == "doubleclick.net"))
+            for i in range(windows):
+                db.session.add(BandwidthLog(mac=self.MAC,
+                                            bytes_sent=1024 * (i + 1)))
+            db.session.commit()
+
+    def _url(self):
+        return f"/admin/device/{self.MAC}/activity"
+
+    def test_anonymous_is_redirected_to_login(self):
+        r = self.app.test_client().get(self._url())
+        self.assertEqual(r.status_code, 302)
+
+    def test_non_admin_is_forbidden(self):
+        with self.app.app_context():
+            db.session.add(User(
+                username="bob", email="bob@lab.local",
+                password_hash=generate_password_hash("pw12345"),
+                status="approved", is_admin=False, email_verified=True))
+            db.session.commit()
+        c = self.app.test_client()
+        c.post("/login", data={"username": "bob", "password": "pw12345"})
+        r = c.get(self._url())
+        self.assertEqual(r.status_code, 403)
+
+    def test_unknown_mac_returns_404(self):
+        r = self.admin.get("/admin/device/11:22:33:44:55:66/activity")
+        self.assertEqual(r.status_code, 404)
+
+    def test_lists_domains_and_marks_flagged_rows(self):
+        self._seed()
+        r = self.admin.get(self._url())
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertIn("friend-pc", body)
+        self.assertIn("example.com", body)
+        self.assertIn("doubleclick.net", body)
+        self.assertIn("blocklisted", body)
+        # the flagged domain must carry the highlight class
+        self.assertIn('<tr class="flagged">', body)
+        # and an un-flagged one must not
+        self.assertIn('<tr class="">', body)
+
+    def test_top_domains_rollup_counts_windows(self):
+        self._seed(lookups=3)
+        r = self.admin.get(self._url())
+        body = r.get_data(as_text=True)
+        # example.com seen twice, doubleclick.net once -> 2 distinct rows
+        self.assertIn('id="top-domains" data-rows="2"', body)
+
+    def test_limit_truncates_recent_tables(self):
+        self._seed(lookups=5, windows=4)
+        old = cfg.ACTIVITY_LIMIT
+        cfg.ACTIVITY_LIMIT = 2
+        try:
+            r = self.admin.get(self._url())
+        finally:
+            cfg.ACTIVITY_LIMIT = old
+        body = r.get_data(as_text=True)
+        self.assertIn('id="recent-lookups" data-rows="2"', body)
+        self.assertIn('id="bandwidth" data-rows="2"', body)
+
+    def test_totals_are_reported(self):
+        self._seed(lookups=3)
+        r = self.admin.get(self._url())
+        body = r.get_data(as_text=True)
+        self.assertIn("3.0 KB", body)     # 1024 + 2048 bytes observed
 
 
 if __name__ == "__main__":

@@ -7,10 +7,11 @@ from flask import (Blueprint, render_template, request, redirect, session,
                    url_for, flash, current_app, jsonify)
 from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime, timedelta
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.exc import IntegrityError
 from . import config as cfg
-from .models import User, Device, AuthEvent, Ban, PortalSession, Notification, db
+from .models import (User, Device, AuthEvent, Ban, PortalSession, Notification,
+                     DNSLog, BandwidthLog, db)
 from .enforcement.quarantine import release_device
 from .enforcement.portal import grant_access, revoke_access as portal_revoke_access
 from .capture.resolve import get_mac_for_ip, get_mac_for_ip_wait
@@ -22,6 +23,16 @@ main = Blueprint("main", __name__)
 
 # Simple address check for the admin-set device contact (Phase 10).
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _human_bytes(n):
+    """Render a byte count for the activity page (2.0 MB, 512 B, ...)."""
+    n = float(n or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
 
 
 # --- auth guards -----------------------------------------------------------
@@ -466,6 +477,59 @@ def unban(mac):
 def traceback_view(mac):
     data = reconstruct_timeline(mac)
     return render_template("traceback.html", data=data)
+
+
+@main.route("/admin/device/<mac>/activity")
+@admin_required
+def activity_view(mac):
+    """F7.4: per-device "Website Activity" — what this device actually did.
+
+    Read-only view over the Phase 7 audit trail (dns_log / bandwidth_log), the
+    raw material the scoring loop writes every 30s window. The sniffer only
+    parses the DNS question, so this shows the domains a device *resolved*, not
+    URLs or page titles (see docs/RUNBOOK-COMBINED.md).
+    """
+    device = Device.query.filter_by(mac=mac).first()
+    if not device:
+        return "Device not found", 404
+
+    limit = cfg.ACTIVITY_LIMIT
+    lookups = (DNSLog.query
+               .filter_by(mac=mac)
+               .order_by(DNSLog.timestamp.desc())
+               .limit(limit).all())
+    windows = (BandwidthLog.query
+               .filter_by(mac=mac)
+               .order_by(BandwidthLog.window_start.desc())
+               .limit(limit).all())
+
+    # Roll the most-resolved domains up. max(flagged) marks a domain as flagged
+    # if *any* lookup of it matched the blocklist.
+    top = (db.session.query(DNSLog.domain,
+                            func.count(DNSLog.id).label("hits"),
+                            func.max(DNSLog.flagged).label("flagged"))
+           .filter(DNSLog.mac == mac)
+           .group_by(DNSLog.domain)
+           .order_by(func.count(DNSLog.id).desc())
+           .limit(cfg.ACTIVITY_TOP_DOMAINS).all())
+
+    dns_total = db.session.query(func.count(DNSLog.id)) \
+        .filter(DNSLog.mac == mac).scalar() or 0
+    flagged_total = db.session.query(func.count(DNSLog.id)) \
+        .filter(DNSLog.mac == mac, DNSLog.flagged.is_(True)).scalar() or 0
+    bytes_total = db.session.query(func.sum(BandwidthLog.bytes_sent)) \
+        .filter(BandwidthLog.mac == mac).scalar() or 0
+
+    return render_template(
+        "activity.html",
+        device=device,
+        lookups=lookups,
+        windows=windows,
+        top=top,
+        dns_total=dns_total,
+        flagged_total=flagged_total,
+        bytes_total=_human_bytes(bytes_total),
+        limit=limit)
 
 
 @main.route("/logout")

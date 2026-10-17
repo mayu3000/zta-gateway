@@ -29,7 +29,9 @@
 </nav>
 <div class="wrap">
 <h1>Threat Traceback — {{ data.mac }}</h1>
-<p><a href="{{ url_for('main.admin_dashboard') }}">&laquo; Back to dashboard</a></p>
+<p><a href="{{ url_for('main.admin_dashboard') }}">&laquo; Back to dashboard</a>
+  &nbsp;|&nbsp;
+  <a href="{{ url_for('main.activity_view', mac=data.mac) }}">Website activity &raquo;</a></p>
 
 <p><b>First anomaly (MEDIUM+) at:</b>
   {{ data.first_seen_anomaly or 'none recorded' }}</p>

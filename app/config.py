@@ -102,3 +102,9 @@ VERIFY_CODE_TTL_MINUTES = int(
 VERIFY_CODE_MAX_TRIES = int(os.environ.get("ZTA_VERIFY_CODE_MAX_TRIES", "5"))
 VERIFY_CODE_LOCK_MINUTES = int(
     os.environ.get("ZTA_VERIFY_CODE_LOCK_MINUTES", "15"))
+
+# --- Website activity page (live-gateway F7.4) -------------------------------
+# How many rows the per-device activity page shows: the most recent DNS
+# lookups and bandwidth windows, and how many top domains to roll up.
+ACTIVITY_LIMIT = int(os.environ.get("ZTA_ACTIVITY_LIMIT", "100"))
+ACTIVITY_TOP_DOMAINS = int(os.environ.get("ZTA_ACTIVITY_TOP_DOMAINS", "25"))
