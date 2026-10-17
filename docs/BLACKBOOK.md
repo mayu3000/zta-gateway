@@ -411,3 +411,83 @@ forensic entry.
   the administrator can see them.
 - The thresholds (35 and 70), the cooldown and the window count are design
   choices, not proven optimal.
+
+## 16. Live-gateway hardening (branch `fix/live-gateway`, 2026-10-17)
+
+Addendum written after the first live captive-portal test on the Kali inline
+gateway. Each item is a defect found on the live box, not a redesign.
+
+### 16.1 DNS and INPUT were hand-typed and temporary (F1)
+
+`setup_gate()` opened with `iptables -F ZTA_FORWARD`, which also wiped any
+hand-added port-53 rule, and the code never opened `INPUT` for the redirect
+listener on port 80. Both had to be re-added by hand after every start.
+
+- New `ZTA_INPUT` chain (jumped from `INPUT` once) accepts `udp/tcp 53`,
+  `udp 67`, `tcp 80`, `tcp 5000` and `RELATED,ESTABLISHED` on the internal
+  interfaces. The `INPUT` policy itself is never changed.
+- `nat ZTA_PREROUTING` now DNATs every outbound `udp/tcp 53` query to the
+  gateway's own dnsmasq (`ZTA_DNS_INTERCEPT`, default on). A signed-out client
+  can therefore resolve names through the gateway and cannot reach an outside
+  resolver. Granted devices are intercepted too, so their lookups still appear
+  in the activity monitor.
+- `teardown_gate()` removes the `ZTA_INPUT` chain and its jump.
+
+### 16.2 Restart behaviour (F2)
+
+The restart reconciliation was inline in `run.py` and untested. It is now
+`portal.restore_from_db()`, which replays active bans and re-grants unexpired
+sessions, marks expired sessions expired, and returns counts for the banner.
+`test_live_gateway.py::RestartReconciliationTests` proves a live session returns,
+an expired session does not, and a banned MAC stays banned.
+
+### 16.3 Email verification (F3)
+
+`Flask-Mail` was missing from `requirements.txt`, so `mail_ext()` always
+returned `None` and the app ran in lab mode **even when SMTP was configured**.
+Fixed by adding the dependency and a `[mail] SMTP ready / LAB MODE` banner.
+
+A signed-out phone cannot read its own email, so verification is now **two-path**:
+
+- a typed **6-digit code** at `/verify-code` — hashed in the database, 15-minute
+  expiry, single use, 5 wrong tries then a 15-minute lock;
+- the emailed link (unchanged), plus an admin **Mark email verified** fallback
+  for when SMTP is unavailable (logged; does not skip admin approval).
+
+Schema changes are applied by an additive, idempotent `ALTER TABLE` migration in
+`create_app()`, because `db.create_all()` cannot add columns to an existing
+`db/zta.db`.
+
+### 16.4 Sign-in, approval and grant (F4)
+
+- The client MAC is resolved with `get_mac_for_ip_wait()`, which sends a real
+  ARP request and retries for up to `ZTA_MAC_LOOKUP_TIMEOUT` (2 s) when the
+  neighbour cache has no entry yet — previously a phone that had just joined
+  silently failed the grant.
+- Distinct status pages replace bare `403` text: *verify your email first*,
+  *waiting for admin approval*, *you are connected*, *could not identify your
+  device*, *device not recognized yet*. `GRANT_ACCESS_FAIL` records the reason.
+- `ZTA_INFRA_MACS` lists the access point and the admin's laptop: they get an
+  ACCEPT above the default DROP plus a redirect-exempt `RETURN`,
+  `quarantine_device()` skips them, and the app-layer middleware bypasses them.
+
+### 16.5 Test results
+
+`tests/test_live_gateway.py` — 14 tests, all pass. Whole suite **152 passing**:
+`test_phase6` 26, `test_phase7` 34, `test_integration` 35, `test_portal` 13,
+`test_notify` 20, `test_discovery` 10, `test_live_gateway` 14.
+
+### 16.6 Limits (honest)
+
+- DNS-over-HTTPS and DNS-over-TLS are not interceptable this way. Signed-out
+  devices cannot use them (everything else is dropped), but a signed-in device
+  can, which hides those lookups from the monitor.
+- DNS interception assumes dnsmasq answers on the gateway address; if it is
+  down, signed-out clients lose name resolution entirely.
+- The 6-digit code is delivered by email; in lab mode it is visible to anyone
+  watching the console/log, which is acceptable only for a demo.
+- `ZTA_INFRA_MACS` trusts a MAC address, which can be spoofed.
+- The typed-code TTL, attempt limit and lock duration are design choices, not
+  proven optimal.
+- The client acceptance matrix (§7 of `RUNBOOK-COMBINED.md`) had not been
+  re-run on the live gateway at the time of writing.

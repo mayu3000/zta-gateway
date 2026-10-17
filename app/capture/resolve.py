@@ -97,3 +97,58 @@ def get_mac_for_ip(ip):
         _cache.update(local_ip_macs())
         _cache_ts = now
     return _cache.get(ip)
+
+
+def invalidate_cache():
+    """Force the next get_mac_for_ip() call to re-read the neighbour table."""
+    global _cache_ts
+    _cache_ts = 0.0
+
+
+def probe_arp(ip, iface=None):
+    """Send one ARP request for *ip* so the neighbour cache gets an entry.
+
+    Returns the MAC if the host answered, else None. Best-effort: any failure
+    (no scapy, no route) just means we fall back to the OS cache.
+    """
+    try:
+        from scapy.all import ARP, Ether, srp
+    except Exception:                     # scapy missing
+        return None
+    iface = iface or cfg.INTERNAL_IFACE
+    try:
+        ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip),
+                     timeout=0.5, iface=iface, verbose=0)
+    except Exception:                     # no such iface, permissions, ...
+        return None
+    for _sent, recv in ans:
+        mac = recv.hwsrc.lower()
+        if mac and mac != "00:00:00:00:00:00":
+            return mac
+    return None
+
+
+def get_mac_for_ip_wait(ip, timeout=None, iface=None):
+    """Resolve a client IP to a MAC, actively ARPing if the cache misses.
+
+    A phone that joined moments ago can be absent from the neighbour table, so
+    a plain cache lookup fails and the sign-in grant is dropped. Here we send
+    an ARP request and retry for up to `timeout` seconds (F4.1).
+    """
+    if timeout is None:
+        timeout = getattr(cfg, "MAC_LOOKUP_TIMEOUT", 2.0)
+    mac = get_mac_for_ip(ip)
+    if mac:
+        return mac
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        mac = probe_arp(ip, iface=iface)
+        if mac:
+            return mac
+        time.sleep(0.25)
+        invalidate_cache()
+        mac = get_mac_for_ip(ip)
+        if mac:
+            return mac
+    return None

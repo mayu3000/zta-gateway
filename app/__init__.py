@@ -10,6 +10,33 @@ try:
 except ImportError:  # pragma: no cover — python-dotenv is a soft dependency
     pass
 
+def _ensure_columns():
+    """Additive, idempotent SQLite migration for columns create_all() misses.
+
+    ``db.create_all()`` only creates missing *tables*; an existing db/zta.db
+    keeps its old schema, so a new column would raise "no such column" at
+    runtime. These ALTER TABLE statements are additive and safe to re-run.
+    """
+    from sqlalchemy import inspect, text
+    existing = {c["name"] for c in inspect(db.engine).get_columns("user")}
+    wanted = {
+        # F3: typed 6-digit verification code.
+        "verification_code_hash": "VARCHAR(200)",
+        "verification_code_expires": "DATETIME",
+        "verification_attempts": "INTEGER",
+        "verification_locked_until": "DATETIME",
+    }
+    added = []
+    for name, ddl in wanted.items():
+        if name not in existing:
+            db.session.execute(
+                text(f"ALTER TABLE user ADD COLUMN {name} {ddl}"))
+            added.append(name)
+    if added:
+        db.session.commit()
+        print(f"[migrate] added user column(s): {', '.join(added)}", flush=True)
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = "change-this-later"
@@ -32,6 +59,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _ensure_columns()
         # create a default admin user if none exists (Phase 1 shortcut)
         if not User.query.filter_by(username="admin").first():
             admin = User(username="admin",

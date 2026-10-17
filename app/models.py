@@ -16,6 +16,11 @@ class User(db.Model):
     # Phase 7: email verification (login also requires email_verified).
     email_verified = db.Column(db.Boolean, default=False)
     verification_token = db.Column(db.String(64), unique=True, nullable=True)
+    # F3: typed 6-digit code alternative to the link (hashed, single use).
+    verification_code_hash = db.Column(db.String(200), nullable=True)
+    verification_code_expires = db.Column(db.DateTime, nullable=True)
+    verification_attempts = db.Column(db.Integer, default=0)
+    verification_locked_until = db.Column(db.DateTime, nullable=True)
 
 
 class AuthEvent(db.Model):

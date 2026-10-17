@@ -81,3 +81,24 @@ NOTIFY_ADMIN_COPY = os.environ.get("ZTA_NOTIFY_ADMIN_COPY", "")
 # closes DNS tunnelling. Granted clients are redirected too, so their lookups
 # still appear in the activity monitor.
 DNS_INTERCEPT = bool(int(os.environ.get("ZTA_DNS_INTERCEPT", "1")))
+
+# --- Sign-in / approval hardening (live-gateway fix F4) ---------------------
+# Infra MACs are never gated and never auto-banned: the access point, the
+# admin's own laptop, printers. Comma-separated, matched case-insensitively.
+INFRA_MACS = tuple(
+    s.strip().lower() for s in
+    os.environ.get("ZTA_INFRA_MACS", "").split(",") if s.strip()
+)
+
+# Seconds to keep sending ARP requests for a client IP before giving up on
+# resolving its MAC (the neighbour cache may not have it yet right after DHCP).
+MAC_LOOKUP_TIMEOUT = float(os.environ.get("ZTA_MAC_LOOKUP_TIMEOUT", "2.0"))
+
+# --- Typed email verification code (live-gateway fix F3) --------------------
+# The 6-digit code emailed at registration: how long it stays valid, how many
+# wrong tries are allowed before it locks, and how long that lock lasts.
+VERIFY_CODE_TTL_MINUTES = int(
+    os.environ.get("ZTA_VERIFY_CODE_TTL_MINUTES", "15"))
+VERIFY_CODE_MAX_TRIES = int(os.environ.get("ZTA_VERIFY_CODE_MAX_TRIES", "5"))
+VERIFY_CODE_LOCK_MINUTES = int(
+    os.environ.get("ZTA_VERIFY_CODE_LOCK_MINUTES", "15"))

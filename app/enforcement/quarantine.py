@@ -125,6 +125,11 @@ def quarantine_device(target_ip, target_mac, gateway_ip=None):
     Returns True if the device is actually isolated on the wire;
     False if the action was recorded only (DB + forensic log).
     """
+    # F4.5: infrastructure MACs (access point, admin laptop) are never banned.
+    from app import config as cfg
+    if target_mac and target_mac.lower() in cfg.INFRA_MACS:
+        return False
+
     if target_mac in _active_quarantines:
         return INJECTION_AVAILABLE
 

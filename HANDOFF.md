@@ -37,10 +37,26 @@ import). `admin.html` and `.gitignore` auto-merged. All 125 tests pass.
   absence meant mail always ran in lab mode; `[mail]` startup banner), F2.3
   (banner reports restored bans/sessions), F5 (`deploy/verify_gate.sh`),
   F6 (`deploy/gateway-up.sh`, `deploy/zta-gateway.service`, `deploy/zta.env.example`).
-  Whole suite now **138 passing** (`test_portal` 10 → 13).
-- **`fix/live-gateway` batch 2 — TODO:** F4 (ARP-retry MAC lookup, status pages,
-  `ZTA_INFRA_MACS`), F3.5 (typed 6-digit verification code + admin "mark verified"
-  fallback), F2 (restart test), F7 (live matrix, `v2.0-demo` tag, BLACKBOOK).
+- **`fix/live-gateway` batch 2 — DONE.** F3.5 typed 6-digit verification code
+  (`/verify-code`, hashed, 15-min expiry, 5 tries then a 15-min lock) with the
+  emailed link kept as an alternative and an admin **Mark email verified** button
+  on Pending Users; F3.7 additive `ALTER TABLE` migration so an existing
+  `db/zta.db` gains the new `user` columns (no data loss); F4.1 ARP-retry MAC
+  lookup (`get_mac_for_ip_wait`, `ZTA_MAC_LOOKUP_TIMEOUT`); F4.2/F4.3 distinct
+  status pages ("verify first" / "waiting for admin approval" / "you are
+  connected" / "device not recognized yet"); F4.5 `ZTA_INFRA_MACS` (never gated,
+  never auto-banned: ACCEPT + nat RETURN in `setup_gate`, skip in
+  `quarantine_device`, bypass in the middleware); F2 restart reconciliation
+  extracted to `portal.restore_from_db()` and unit-tested (live grants replayed,
+  bans kept, expired sessions marked expired and NOT re-granted).
+  New file `tests/test_live_gateway.py` (14 tests).
+- **Whole suite now 152 passing:** `test_phase6` 26 · `test_phase7` 34 ·
+  `test_integration` 35 · `test_portal` 13 · `test_notify` 20 ·
+  `test_discovery` 10 · `test_live_gateway` 14.
+- **`fix/live-gateway` batch 3 — TODO:** F7 only — run the live client matrix on
+  the Kali gateway, then merge into `integration/all-features` and tag
+  `v2.0-demo` (leave `main`/`v1.0-final` alone); port the Website Activity page
+  onto this branch.
 - **Portal gate (P3.2):** live test matrix on the Pi/Kali gateway + a spare device.
 - **Email warning (Item 9):** live test on the gateway (email only reaches the owner, not the device).
 - **Demo monitoring:** live test of the feed + toast on the inline gateway.
@@ -88,7 +104,8 @@ import). `admin.html` and `.gitignore` auto-merged. All 125 tests pass.
   `fix/live-gateway` / `integration/all-features` → `tests/test_phase6.py` (26) ·
   `tests/test_phase7.py` (34) · `tests/test_integration.py` (35) ·
   `tests/test_portal.py` (13) · `tests/test_notify.py` (20) ·
-  `tests/test_discovery.py` (10) = **138, all passing**.
+  `tests/test_discovery.py` (10) · `tests/test_live_gateway.py` (14) =
+  **152, all passing**.
   They are standalone scripts, not pytest — run `./venv/bin/python tests/<file>.py`.
   (`test_portal`/`test_notify` are unittest-style; the 95-count suites print `TOTAL`.)
 

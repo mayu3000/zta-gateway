@@ -19,6 +19,7 @@
     button { padding: 5px 14px; border: none; border-radius: 4px;
              color: #fff; cursor: pointer; margin-right: 6px; }
     .approve { background: #27ae60; }
+    .verify { background: #2980b9; }
     .reject { background: #c0392b; }
     .empty { padding: 24px; text-align: center; color: #7f8c8d; }
   </style>
@@ -33,13 +34,21 @@
 <div class="wrap">
   <h1>Pending User Approvals</h1>
   <table>
-    <tr><th>Username</th><th>Email</th><th>Registered At</th><th>Actions</th></tr>
+    <tr><th>Username</th><th>Email</th><th>Email Verified</th><th>Registered At</th><th>Actions</th></tr>
     {% for u in pending %}
     <tr>
       <td>{{ u.username }}</td>
       <td>{{ u.email or '-' }}</td>
+      <td>{{ 'yes' if u.email_verified else 'no' }}</td>
       <td>{{ u.registered_at }}</td>
       <td>
+        {% if not u.email_verified %}
+        <form method="post" action="{{ url_for('main.mark_email_verified', user_id=u.id) }}"
+              style="display:inline">
+          <button type="submit" class="verify"
+                  title="Lab fallback when SMTP is unavailable">Mark email verified</button>
+        </form>
+        {% endif %}
         <form method="post" action="{{ url_for('main.approve_user', user_id=u.id) }}"
               style="display:inline">
           <button type="submit" class="approve">Approve</button>
@@ -52,7 +61,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="empty">No pending registration requests.</td></tr>
+    <tr><td colspan="5" class="empty">No pending registration requests.</td></tr>
     {% endfor %}
   </table>
 </div>

@@ -13,7 +13,7 @@ from . import config as cfg
 from .models import User, Device, AuthEvent, Ban, PortalSession, Notification, db
 from .enforcement.quarantine import release_device
 from .enforcement.portal import grant_access, revoke_access as portal_revoke_access
-from .capture.resolve import get_mac_for_ip
+from .capture.resolve import get_mac_for_ip, get_mac_for_ip_wait
 from .logging.forensic import log_forensic_event, LOG_PATH
 from .traceback.tracer import reconstruct_timeline
 from .mail import send_verification_email
@@ -67,36 +67,97 @@ def login():
         if not success:
             return "Invalid credentials", 401
         if not user.email_verified:
-            return "Please verify your email first.", 403
+            return render_template(
+                "portal_status.html",
+                heading="Verify your email first",
+                message="We emailed you a 6-digit code. Type it on the portal "
+                        "(or open the link in the email) to activate this "
+                        "account.",
+                link_url=url_for("main.verify_code", username=user.username),
+                link_text="Enter verification code"), 403
         if user.status != "approved":
-            return "Your account is pending admin approval.", 403
+            return render_template(
+                "portal_status.html",
+                heading="Waiting for admin approval",
+                message="Your email is verified. An administrator still has to "
+                        "approve this account (gateway dashboard → Pending "
+                        "Users). Sign in again once they have.",
+                link_url=url_for("main.login"),
+                link_text="Sign in again"), 403
         session["user"] = user.username
 
         # Portal gate: resolve MAC and grant network access.
         if cfg.PORTAL_GATE and request.remote_addr != "127.0.0.1":
-            mac = get_mac_for_ip(request.remote_addr)
-            if mac:
-                device = Device.query.filter_by(mac=mac).first()
-                if device:
-                    device.user_id = user.id
-                    device.status = "approved"
-                    device.granted_at = datetime.utcnow()
-                    ps = PortalSession(
-                        mac=mac, username=user.username,
-                        state="granted",
-                        expires_at=datetime.utcnow() + timedelta(
-                            minutes=cfg.SESSION_TTL_MINUTES),
-                    )
-                    db.session.add(ps)
-                    db.session.commit()
-                    grant_access(mac)
-                    log_forensic_event(mac, "GRANT_ACCESS",
-                                        f"User {user.username} signed in")
-                else:
-                    log_forensic_event(
-                        request.remote_addr, "GRANT_ACCESS_FAIL",
-                        f"User {user.username} signed in but MAC {mac} "
-                        f"has no device record")
+            # F4.1: the neighbour cache may not hold the client yet right after
+            # it got a lease, so actively ARP for it before giving up.
+            mac = get_mac_for_ip_wait(request.remote_addr)
+            if not mac:
+                log_forensic_event(
+                    request.remote_addr, "GRANT_ACCESS_FAIL",
+                    f"User {user.username} signed in but MAC lookup failed for "
+                    f"{request.remote_addr} "
+                    f"(no ARP reply within {cfg.MAC_LOOKUP_TIMEOUT}s)")
+                return render_template(
+                    "portal_status.html",
+                    heading="Could not identify your device",
+                    message="You are signed in, but the gateway could not read "
+                            "this device's MAC address, so it cannot open the "
+                            "network for it. Reconnect the device and try "
+                            "again.",
+                    link_url=url_for("main.login"),
+                    link_text="Try again"), 503
+
+            # F4.5: infrastructure MACs (access point, admin laptop) are always
+            # approved and never redirected.
+            if mac in cfg.INFRA_MACS:
+                grant_access(mac)
+                log_forensic_event(
+                    mac, "GRANT_ACCESS",
+                    f"Infra MAC {mac} (user {user.username}) — never gated")
+                return render_template(
+                    "portal_status.html",
+                    heading="You are connected",
+                    message="This is an approved infrastructure device.",
+                    link_url=url_for("main.admin_dashboard"),
+                    link_text="Open the dashboard")
+
+            device = Device.query.filter_by(mac=mac).first()
+            if not device:
+                log_forensic_event(
+                    request.remote_addr, "GRANT_ACCESS_FAIL",
+                    f"User {user.username} signed in but MAC {mac} has no "
+                    f"device record yet")
+                return render_template(
+                    "portal_status.html",
+                    heading="Device not recognized yet",
+                    message="You are signed in, but this device is not in the "
+                            "gateway's device list yet. Wait a few seconds for "
+                            "discovery to see it, then sign in again.",
+                    link_url=url_for("main.login"),
+                    link_text="Try again"), 503
+
+            device.user_id = user.id
+            device.status = "approved"
+            device.granted_at = datetime.utcnow()
+            ps = PortalSession(
+                mac=mac, username=user.username,
+                state="granted",
+                expires_at=datetime.utcnow() + timedelta(
+                    minutes=cfg.SESSION_TTL_MINUTES),
+            )
+            db.session.add(ps)
+            db.session.commit()
+            grant_access(mac)
+            log_forensic_event(mac, "GRANT_ACCESS",
+                               f"User {user.username} signed in")
+            # F4.3: an explicit "you are connected" page so the client's own
+            # connectivity probe can clear its sign-in notification.
+            return render_template(
+                "portal_status.html",
+                heading="You are connected",
+                message="Access granted — you can browse the internet now.",
+                link_url=url_for("main.admin_dashboard"),
+                link_text="Open the dashboard")
         return redirect(url_for("main.admin_dashboard"))
     return render_template("login.html")
 
@@ -119,6 +180,9 @@ def register():
             return "Email already registered.", 400
 
         token = secrets.token_urlsafe(32)
+        # F3: a 6-digit code alongside the link, so the user can verify from the
+        # signed-out phone (which has no internet to read its own email).
+        code = f"{secrets.randbelow(1_000_000):06d}"
         try:
             db.session.add(User(
                 username=username,
@@ -127,6 +191,9 @@ def register():
                 status="pending",
                 is_admin=False,
                 verification_token=token,
+                verification_code_hash=generate_password_hash(code),
+                verification_code_expires=datetime.utcnow() + timedelta(
+                    minutes=cfg.VERIFY_CODE_TTL_MINUTES),
             ))
             db.session.commit()
         except IntegrityError:
@@ -135,12 +202,82 @@ def register():
 
         verify_url = url_for("main.verify_email", token=token, _external=True)
         send_verification_email(current_app._get_current_object(),
-                                email, username, verify_url)
+                                email, username, verify_url, code=code)
 
-        flash("Registration submitted. Check your email (or the server console "
-              "in lab mode) for the verification link, then wait for admin approval.")
-        return redirect(url_for("main.login"))
+        flash("Registration submitted. We emailed a 6-digit code and a link — "
+              "verify, then wait for admin approval.")
+        return redirect(url_for("main.verify_code", username=username))
     return render_template("register.html")
+
+
+@main.route("/verify-code", methods=["GET", "POST"])
+def verify_code():
+    """F3: typed 6-digit code, an alternative to the emailed link.
+
+    Single use, 15-minute expiry, and it locks for 15 minutes after 5 wrong
+    tries. The link route (:func:`verify_email`) still works.
+    """
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        code = request.form.get("code", "").strip()
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return render_template("verify_code.html", username=username,
+                                   error="No such account."), 404
+        if user.email_verified:
+            return render_template(
+                "portal_status.html",
+                heading="Already verified",
+                message="Your email is already verified — you can sign in.",
+                link_url=url_for("main.login"),
+                link_text="Go to sign in")
+
+        now = datetime.utcnow()
+        if user.verification_locked_until and user.verification_locked_until > now:
+            mins = int((user.verification_locked_until - now).total_seconds()
+                       // 60) + 1
+            return render_template(
+                "verify_code.html", username=username,
+                error=f"Too many wrong codes. Try again in {mins} minute(s)."), 429
+        if (not user.verification_code_hash or not user.verification_code_expires
+                or user.verification_code_expires < now):
+            return render_template(
+                "verify_code.html", username=username,
+                error="That code has expired. Register again to get a new one."), 410
+        if not check_password_hash(user.verification_code_hash, code):
+            user.verification_attempts = (user.verification_attempts or 0) + 1
+            if user.verification_attempts >= cfg.VERIFY_CODE_MAX_TRIES:
+                user.verification_attempts = 0
+                user.verification_locked_until = now + timedelta(
+                    minutes=cfg.VERIFY_CODE_LOCK_MINUTES)
+                db.session.commit()
+                log_forensic_event(
+                    username, "EMAIL_VERIFY_LOCKED",
+                    f"{cfg.VERIFY_CODE_MAX_TRIES} wrong codes — locked "
+                    f"{cfg.VERIFY_CODE_LOCK_MINUTES} min")
+                return render_template(
+                    "verify_code.html", username=username,
+                    error=f"Too many wrong codes. Locked for "
+                          f"{cfg.VERIFY_CODE_LOCK_MINUTES} minutes."), 429
+            db.session.commit()
+            left = cfg.VERIFY_CODE_MAX_TRIES - user.verification_attempts
+            return render_template(
+                "verify_code.html", username=username,
+                error=f"Wrong code. {left} attempt(s) left."), 400
+
+        user.email_verified = True
+        user.verification_token = None
+        user.verification_code_hash = None
+        user.verification_code_expires = None
+        user.verification_attempts = 0
+        user.verification_locked_until = None
+        db.session.commit()
+        log_forensic_event(username, "EMAIL_VERIFIED", "Typed code verified")
+        return render_template("verify_success.html", username=user.username)
+
+    return render_template("verify_code.html",
+                           username=request.args.get("username", ""),
+                           error=None)
 
 
 @main.route("/verify/<token>")
@@ -150,6 +287,11 @@ def verify_email(token):
         return "Invalid or expired verification link.", 400
     user.email_verified = True
     user.verification_token = None   # one-time use
+    # The link and the typed code are alternatives; clear the code too.
+    user.verification_code_hash = None
+    user.verification_code_expires = None
+    user.verification_attempts = 0
+    user.verification_locked_until = None
     db.session.commit()
     return render_template("verify_success.html", username=user.username)
 
@@ -174,6 +316,29 @@ def approve_user(user_id):
     db.session.commit()
     log_forensic_event(user.username, "USER_APPROVED",
                        f"Approved registration for {user.username}")
+    return redirect(url_for("main.pending_users"))
+
+
+@main.route("/admin/mark-verified/<int:user_id>", methods=["POST"])
+@admin_required
+def mark_email_verified(user_id):
+    """F3.6: lab fallback when SMTP is unavailable.
+
+    Logged to the forensic log. Does NOT bypass the separate admin approval.
+    """
+    user = User.query.get(user_id)
+    if not user:
+        return "User not found", 404
+    user.email_verified = True
+    user.verification_token = None
+    user.verification_code_hash = None
+    user.verification_code_expires = None
+    user.verification_attempts = 0
+    user.verification_locked_until = None
+    db.session.commit()
+    log_forensic_event(
+        user.username, "EMAIL_VERIFIED_MANUAL",
+        f"Admin marked {user.username}'s email verified (lab fallback)")
     return redirect(url_for("main.pending_users"))
 
 

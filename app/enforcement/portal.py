@@ -136,10 +136,22 @@ def setup_gate():
     _ensure_input_chain()
 
     # --- FORWARD chain ---
-    # Order per interface is: banned DROP  >  granted ACCEPT  >  default DROP.
-    # Bans are inserted at the top by sync_bans(); grants are appended by
-    # grant_access(); both then call _ensure_default_drops() so the catch-all
-    # DROP always ends up last (and thus never shadows a granted ACCEPT).
+    # F4.5: infrastructure MACs (access point, admin laptop) are never gated:
+    # ACCEPT in FORWARD before the default DROP, and RETURN in nat so they are
+    # never redirected.
+    for iface in cfg.INTERNAL_IFACES:
+        for mac in cfg.INFRA_MACS:
+            _run(["iptables", "-A", FORWARD_CHAIN,
+                  "-i", iface, "-m", "mac", "--mac-source", mac,
+                  "-j", "ACCEPT"])
+            _run(["iptables", "-t", "nat", "-A", NAT_CHAIN,
+                  "-i", iface, "-m", "mac", "--mac-source", mac,
+                  "-p", "tcp", "--dport", "80", "-j", "RETURN"])
+
+    # Order per interface is: banned DROP  >  infra/granted ACCEPT  >
+    # default DROP. Bans are inserted at the top by sync_bans(); grants are
+    # appended by grant_access(); both then call _ensure_default_drops() so the
+    # catch-all DROP always ends up last (and thus never shadows an ACCEPT).
     _ensure_default_drops()
 
     # --- nat PREROUTING chain ---
@@ -303,5 +315,35 @@ def sync_bans(active_ban_macs):
 
     # 3. Keep the catch-all DROP last.
     _ensure_default_drops()
+
+
+# --- restart reconciliation ----------------------------------------------------
+
+def restore_from_db(app):
+    """Re-apply bans and unexpired grants after a restart (F2 / run.py).
+
+    ``setup_gate()`` rebuilds the chains from scratch, so everything that was
+    granted or banned before the restart must be replayed. Expired sessions are
+    marked "expired" and deliberately NOT re-granted. Returns
+    ``(bans_restored, sessions_restored)`` for the startup banner.
+    """
+    from datetime import datetime
+    from app.models import Ban, PortalSession, db
+
+    with app.app_context():
+        banned = [b.mac for b in Ban.query.filter_by(active=True).all()]
+        sync_bans(banned)
+
+        now = datetime.utcnow()
+        restored = 0
+        for ps in PortalSession.query.filter_by(state="granted").all():
+            if ps.expires_at and ps.expires_at < now:
+                ps.state = "expired"
+            else:
+                grant_access(ps.mac)
+                ps.last_activity = now
+                restored += 1
+        db.session.commit()
+    return len(banned), restored
 
     log.info("[portal] sync_bans: %d banned MACs", len(active_ban_macs))

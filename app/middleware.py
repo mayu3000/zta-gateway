@@ -56,6 +56,9 @@ def captive_portal_check():
     from app.models import PortalSession
     mac = get_mac_for_ip(request.remote_addr)
     if mac:
+        # Infra MACs (access point, admin laptop) are always let through.
+        if mac in cfg.INFRA_MACS:
+            return None
         ps = PortalSession.query.filter_by(mac=mac, state="granted").first()
         if ps:
             from datetime import datetime

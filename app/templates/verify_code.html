@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ZTA Gateway — Verify your email</title>
+  <style>
+    body { font-family: sans-serif; max-width: 420px; margin: 70px auto;
+           padding: 0 18px; }
+    input { width: 100%; padding: 8px; margin: 6px 0 14px;
+            box-sizing: border-box; }
+    button { padding: 8px 18px; background: #337ab7; color: #fff; border: none;
+             border-radius: 4px; cursor: pointer; }
+    a { color: #337ab7; }
+    .err { background: #fdecea; border: 1px solid #f5c6cb; color: #a94442;
+           padding: 10px; margin-bottom: 16px; border-radius: 4px; }
+    h1 { font-size: 1.4em; }
+    .hint { font-size: .9em; color: #7f8c8d; }
+  </style>
+</head>
+<body>
+  <h1>Verify your email</h1>
+  <p class="hint">We emailed you a 6-digit code and a link. Enter the code
+     here, or just open the link from any device with internet.</p>
+  {% if error %}
+    <div class="err">{{ error }}</div>
+  {% endif %}
+  <form method="POST">
+    <label>Username</label>
+    <input name="username" value="{{ username or '' }}" required
+           autocomplete="username">
+    <label>6-digit code</label>
+    <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+           placeholder="123456" required>
+    <button type="submit">Verify</button>
+  </form>
+  <p class="hint">In lab mode (no SMTP) the code is printed in the gateway's
+     terminal and written to the forensic log.</p>
+  <p><a href="{{ url_for('main.login') }}">&laquo; Back to login</a></p>
+</body>
+</html>

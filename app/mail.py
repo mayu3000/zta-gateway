@@ -65,10 +65,16 @@ def mail_mode(app):
     return "LAB MODE (no MAIL_SERVER configured)"
 
 
-def send_verification_email(app, email_address, username, verify_url):
-    """Deliver the verification link: real SMTP if configured, else console."""
+def send_verification_email(app, email_address, username, verify_url, code=None):
+    """Deliver the verification link (and optional 6-digit code).
+
+    Real SMTP if configured, else the console/forensic lab-mode fallback.
+    """
     global _LAST_VERIFY_URL
     _LAST_VERIFY_URL = verify_url
+
+    code_line = (f"Or type this code on the portal page: {code}\n\n"
+                 if code else "")
 
     ext = mail_ext(app)
     if ext is not None:
@@ -79,8 +85,10 @@ def send_verification_email(app, email_address, username, verify_url):
                                       "noreply@ztagateway.local"),
                 recipients=[email_address])
             msg.body = (f"Hi {username},\n\n"
-                        f"Click this link to verify your email for ZTA Gateway:\n"
-                        f"{verify_url}\n\n"
+                        f"{code_line}"
+                        f"Or click this link to verify your email for ZTA "
+                        f"Gateway:\n{verify_url}\n\n"
+                        f"The code and link expire in 15 minutes.\n\n"
                         f"If you didn't request this, you can ignore this email.")
             ext.send(msg)
             log.info("verification email sent to %s", email_address)
@@ -90,9 +98,10 @@ def send_verification_email(app, email_address, username, verify_url):
 
     # LAB MODE fallback — no live mail server. The link still reaches the user
     # via the server console and the forensic audit log.
-    print(f"[mail:LAB-MODE] VERIFY {email_address}: {verify_url}", flush=True)
+    print(f"[mail:LAB-MODE] VERIFY {email_address}: code={code} url={verify_url}",
+          flush=True)
     log_forensic_event(username, "EMAIL_VERIFY",
-                       {"to": email_address, "url": verify_url})
+                       {"to": email_address, "url": verify_url, "code": code})
     return "console"
 
 
