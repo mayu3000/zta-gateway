@@ -320,8 +320,15 @@ sudo iptables-restore < /tmp/rules.bak
 sudo systemctl disable --now zta-gateway
 ```
 
-`run.py`'s `teardown_gate()` (on clean shutdown) removes the `ZTA_FORWARD`,
-`ZTA_PREROUTING` and `ZTA_INPUT` chains and their jumps.
+`teardown_gate()` is **not** called by `run.py` — Ctrl-C leaves the `ZTA_FORWARD`,
+`ZTA_PREROUTING` and `ZTA_INPUT` chains in place (so access keeps being enforced
+while the app is down). To remove them explicitly:
+
+```bash
+sudo venv/bin/python -c "import app.enforcement.portal as p; p.teardown_gate()"
+# or, to go back to the pre-demo state entirely:
+sudo iptables-restore < /root/zta-backups/<your-file>.v4
+```
 
 ---
 
