@@ -187,7 +187,7 @@ no internet (this was a real bug, fixed on this branch).
 `udp/tcp 53` query from a client to `192.168.50.1:53`, so a signed-out device can
 still resolve names through the gateway's dnsmasq (and cannot reach an outside
 resolver, which also blocks DNS tunnelling). Signed-in devices are intercepted
-too, so their lookups still show up in the Website Activity page. Limits:
+too, so their lookups still show up in the Website Activity page (§7 step 5). Limits:
 DNS-over-HTTPS and DNS-over-TLS are not affected — signed-out devices cannot use
 them because everything else is dropped, but signed-in devices can, which hides
 those lookups from the monitor.
@@ -222,6 +222,13 @@ Open the admin UI on the gateway itself (or from a granted device):
 5. **Live monitoring** — the dashboard **Event Feed** fills with forensic
    events; the **Recent Notifications** table lists emails; a **ban toast**
    pops in the corner when a device is auto-quarantined.
+   - **Website Activity** — click **activity** in a device's row (or open
+     `/admin/device/<mac>/activity`) to see what that device actually did: top
+     domains resolved, the most recent DNS lookups with blocklisted ones
+     highlighted, and bytes per 30s window. This is **DNS only** — the sniffer
+     parses the DNS question, so URLs and page content are never visible, and
+     encrypted DNS (DoH/DoT) is not captured at all. Same data from a shell:
+     `sqlite3 db/zta.db "select domain,flagged from dns_log where mac='<mac>';"`
 6. **Risk → warning → ban** — from the *device*, force a MEDIUM then HIGH risk:
 
    ```bash
@@ -231,6 +238,17 @@ Open the admin UI on the gateway itself (or from a granted device):
    - first MEDIUM window → **email warning** to the owner (10-min cooldown);
    - risk ≥ 70 (`HIGH_RISK_BAN_THRESHOLD`) → **ban**: device goes offline,
      `DROP` rule appears, dashboard toast fires, owner gets a ban notice.
+
+   Two things decide whether the score actually reaches 70:
+   - **The baseline has to be learned first.** Behaviour scoring is flat `5`
+     until the device has `MIN_SAMPLES_FOR_BASELINE` = 20 windows (~10 minutes
+     of traffic), and identity+device+network alone cap out at **57**. No burst
+     can ban a device that has only just appeared. Watch `samples=` in the
+     scoring lines, or the **Baseline** column in the dashboard.
+   - **Feed all four dimensions in one window.** A port sweep only moves
+     behaviour and adds the suspicious ports (23/445/3389/6667) to network
+     risk; add a couple of blocklisted DNS lookups (40 pts each) and a few
+     failed logins (15 pts each, 15-min window) to push it over the line.
 7. **Unban / logout / TTL** —
    - dashboard **Unban** button → device must *sign in again* (unban resets
      approval to `unknown`);
@@ -347,4 +365,6 @@ sudo iptables-restore < /root/zta-backups/<your-file>.v4
 | "Could not identify your device" on sign-in | no ARP reply for the client IP | check `ip neigh show dev eth1`; raise `ZTA_MAC_LOOKUP_TIMEOUT` |
 | Access point / admin laptop gets gated | infra MAC not listed | set `ZTA_INFRA_MACS` to its MAC |
 | Device never appears in dashboard | sniffer on wrong NIC / no ARP | `sudo ip neigh show dev eth1`; `sudo ./deploy/verify_gate.sh <ip>` |
+| Activity page empty, but the device is browsing | browser uses DoH/DoT — those never touch port 53 | check `/admin/device/<mac>/activity` for any rows at all; plain DNS only |
+| Device never reaches HIGH, never banned | baseline not learned (`samples < 20`) or only one dimension spiked | watch `samples=` in the scoring lines; feed identity + network + behaviour in the same 30s window (§7 step 6) |
 | `sync_bans`-era symptom: new ban kills everyone | old code | fixed on this branch (see HANDOFF) |

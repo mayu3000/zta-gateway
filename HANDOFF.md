@@ -7,7 +7,7 @@ on each branch shows its head commit._
 
 | Branch | Contents | Head |
 |---|---|---|
-| **`fix/live-gateway`** | **Live-gateway fixes (work in progress).** Branch off `integration/all-features`; batch 1 = DNS interception + `ZTA_INPUT` chain + Flask-Mail dep + `deploy/verify_gate.sh`/`gateway-up.sh`/systemd unit. | `087bb99` |
+| **`fix/live-gateway`** | **Live-gateway fixes (work in progress).** Branch off `integration/all-features`; batch 1 = DNS interception + `ZTA_INPUT` chain + Flask-Mail dep + `deploy/verify_gate.sh`/`gateway-up.sh`/systemd unit; batch 2 = typed verify code + migration + ARP retry + status pages + infra MACs + restart replay; batch 3 = per-device Website Activity page. | `81ba40e` |
 | **`integration/all-features`** | **Everything merged** — Option A + Wi-Fi AP + portal gate + email warning + demo monitoring. Use this branch for live testing. | `f7c46dc` |
 | `main` (tag `v1.0-final`) | Option **B** submission — ARP quarantine, recorded-only on Windows | `1f9399a` |
 | `feature/option-a-inline` | Option **A** inline gateway — iptables DROP, Scapy ARP discovery, Linux neighbour table, Kali dual-NIC constants | `6fdc1d9` |
@@ -50,13 +50,20 @@ import). `admin.html` and `.gitignore` auto-merged. All 125 tests pass.
   extracted to `portal.restore_from_db()` and unit-tested (live grants replayed,
   bans kept, expired sessions marked expired and NOT re-granted).
   New file `tests/test_live_gateway.py` (14 tests).
-- **Whole suite now 152 passing:** `test_phase6` 26 · `test_phase7` 34 ·
+- **Whole suite now 159 passing:** `test_phase6` 26 · `test_phase7` 34 ·
   `test_integration` 35 · `test_portal` 13 · `test_notify` 20 ·
-  `test_discovery` 10 · `test_live_gateway` 14.
-- **`fix/live-gateway` batch 3 — TODO:** F7 only — run the live client matrix on
-  the Kali gateway, then merge into `integration/all-features` and tag
-  `v2.0-demo` (leave `main`/`v1.0-final` alone); port the Website Activity page
-  onto this branch.
+  `test_discovery` 10 · `test_live_gateway` 21.
+- **`fix/live-gateway` batch 3 — F7.4 DONE** (commit `81ba40e`): per-device
+  **Website Activity** page at `/admin/device/<mac>/activity`. Read-only view
+  over the Phase 7 audit trail the scoring loop already writes — top domains
+  (hits + blocklisted marker), the most recent DNS lookups (flagged rows
+  highlighted), and bytes sent/received per 30s window. Links added from the
+  dashboard device row (`timeline · activity`) and from the traceback page.
+  Config: `ZTA_ACTIVITY_LIMIT` (100), `ZTA_ACTIVITY_TOP_DOMAINS` (25).
+  `test_live_gateway.py` 14 → 21.
+- **`fix/live-gateway` batch 3 — still TODO:** run the live client matrix on the
+  Kali gateway, then merge into `integration/all-features` and tag `v2.0-demo`
+  (leave `main`/`v1.0-final` alone).
 - **Portal gate (P3.2):** live test matrix on the Pi/Kali gateway + a spare device.
 - **Email warning (Item 9):** live test on the gateway (email only reaches the owner, not the device).
 - **Demo monitoring:** live test of the feed + toast on the inline gateway.
@@ -104,8 +111,8 @@ import). `admin.html` and `.gitignore` auto-merged. All 125 tests pass.
   `fix/live-gateway` / `integration/all-features` → `tests/test_phase6.py` (26) ·
   `tests/test_phase7.py` (34) · `tests/test_integration.py` (35) ·
   `tests/test_portal.py` (13) · `tests/test_notify.py` (20) ·
-  `tests/test_discovery.py` (10) · `tests/test_live_gateway.py` (14) =
-  **152, all passing**.
+  `tests/test_discovery.py` (10) · `tests/test_live_gateway.py` (21) =
+  **159, all passing**.
   They are standalone scripts, not pytest — run `./venv/bin/python tests/<file>.py`.
   (`test_portal`/`test_notify` are unittest-style; the 95-count suites print `TOTAL`.)
 
