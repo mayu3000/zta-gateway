@@ -50,6 +50,21 @@ def mail_ext(app):
     return ext
 
 
+def mail_mode(app):
+    """Return a one-line description of how outbound email will be delivered.
+
+    Used by run.py for the startup banner so the operator can see at a glance
+    whether real SMTP is active or the console/forensic LAB MODE fallback is in
+    use (the plan's F3.3).
+    """
+    ext = mail_ext(app)
+    if ext is not None:
+        return "SMTP ready (%s)" % app.config.get("MAIL_SERVER")
+    if not FLASK_MAIL_AVAILABLE:
+        return "LAB MODE (Flask-Mail not installed)"
+    return "LAB MODE (no MAIL_SERVER configured)"
+
+
 def send_verification_email(app, email_address, username, verify_url):
     """Deliver the verification link: real SMTP if configured, else console."""
     global _LAST_VERIFY_URL

@@ -73,3 +73,11 @@ NOTIFY_BAN_NOTICE = bool(int(os.environ.get("ZTA_NOTIFY_BAN_NOTICE", "1")))
 
 # Optional admin address copied on every notice (empty = no copy).
 NOTIFY_ADMIN_COPY = os.environ.get("ZTA_NOTIFY_ADMIN_COPY", "")
+
+# --- DNS interception (live-gateway fix F1) ----------------------------------
+# When on, all outbound DNS (udp/tcp 53) from internal clients is DNAT'd to the
+# gateway's own dnsmasq. Names therefore resolve before sign-in without any
+# hand-added FORWARD rule, and outside resolvers are unreachable -- which also
+# closes DNS tunnelling. Granted clients are redirected too, so their lookups
+# still appear in the activity monitor.
+DNS_INTERCEPT = bool(int(os.environ.get("ZTA_DNS_INTERCEPT", "1")))

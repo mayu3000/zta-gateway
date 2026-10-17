@@ -74,6 +74,7 @@ class PortalFirewallTests(unittest.TestCase):
 
     def setUp(self):
         cfg.PORTAL_GATE = True
+        cfg.DNS_INTERCEPT = True
         self.app = create_app()
         self.app.config["TESTING"] = True
         with self.app.app_context():
@@ -99,18 +100,69 @@ class PortalFirewallTests(unittest.TestCase):
 
     @patch("app.enforcement.portal._run")
     def test_setup_gate_idempotent(self, mock_run):
-        """Running setup_gate 3 times should not duplicate rules in final state."""
+        """Running setup_gate 3 times must not accumulate duplicate rules."""
         fake, _, state = _make_stateful_mock()
         mock_run.side_effect = fake
         from app.enforcement.portal import setup_gate
         setup_gate()
+        first = len(state["rules"])
         setup_gate()
         setup_gate()
-        # After 3 runs with flush+rebuild, each unique rule should appear
-        # exactly once in the final state.
-        self.assertLessEqual(
-            len(state["rules"]), 4,
-            f"Final rule state should have few unique rules, got {len(state['rules'])}"
+        self.assertGreater(first, 0, "setup_gate should install rules")
+        self.assertEqual(
+            len(state["rules"]), first,
+            "re-running setup_gate must not accumulate duplicate rules",
+        )
+
+    @patch("app.enforcement.portal._run")
+    def test_setup_gate_intercepts_dns(self, mock_run):
+        """Outbound DNS from clients is DNAT'd to the gateway's own resolver."""
+        fake, _, _ = _make_stateful_mock()
+        mock_run.side_effect = fake
+        from app.enforcement.portal import setup_gate
+        setup_gate()
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        dnat53 = [
+            c for c in calls
+            if "-t" in c and "nat" in c and "DNAT" in c
+            and "53" in c and "--to-dest" in c
+        ]
+        self.assertEqual(
+            len(dnat53), 2,
+            "both udp and tcp port 53 should be DNAT'd to the gateway",
+        )
+        self.assertTrue(
+            all(f"{cfg.GATEWAY_INTERNAL_IP}:53" in c for c in dnat53),
+            "DNS DNAT must target the gateway's own resolver",
+        )
+
+    @patch("app.enforcement.portal._run")
+    def test_setup_gate_opens_input_services(self, mock_run):
+        """ZTA_INPUT must accept DNS, DHCP, the redirect and the web UI."""
+        fake, _, _ = _make_stateful_mock()
+        mock_run.side_effect = fake
+        from app.enforcement.portal import setup_gate
+        setup_gate()
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        ports = set()
+        for c in calls:
+            if "ZTA_INPUT" in c and "-A" in c and "ACCEPT" in c and "--dport" in c:
+                ports.add(c[c.index("--dport") + 1])
+        self.assertTrue(
+            {"53", "67", "80", "5000"}.issubset(ports),
+            f"ZTA_INPUT should accept DNS/DHCP/portal ports; got {ports}",
+        )
+
+    @patch("app.enforcement.portal._run")
+    def test_teardown_removes_input_chain(self, mock_run):
+        fake, _, _ = _make_stateful_mock()
+        mock_run.side_effect = fake
+        from app.enforcement.portal import teardown_gate
+        teardown_gate()
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        self.assertTrue(
+            any("ZTA_INPUT" in c and "-X" in c for c in calls),
+            "teardown_gate should delete the ZTA_INPUT chain",
         )
 
     @patch("app.enforcement.portal._run")

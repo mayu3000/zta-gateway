@@ -240,6 +240,8 @@ if __name__ == "__main__":
     }
     print(_mode_msgs.get(ENFORCEMENT_MODE, _mode_msgs["recorded"]), flush=True)
     _app = _get_app()
+    from app.mail import mail_mode
+    print(f"[mail] {mail_mode(_app)}", flush=True)
     threading.Thread(target=start_sniffing, daemon=True).start()
     threading.Thread(target=periodic_device_scan, daemon=True).start()
     threading.Thread(target=periodic_risk_scoring, daemon=True).start()
@@ -259,18 +261,24 @@ if __name__ == "__main__":
             now = datetime.utcnow()
             sessions = PortalSession.query.filter_by(
                 state="granted").all()
+            sessions_restored = 0
             for ps in sessions:
                 if ps.expires_at and ps.expires_at < now:
                     ps.state = "expired"
                 else:
                     grant_access(ps.mac)
                     ps.last_activity = now
+                    sessions_restored += 1
             db.session.commit()
 
         from app.portal_redirect import start_portal_listener
         start_portal_listener()
         print(f"[portal] gate ON, interfaces: "
               f"{','.join(cfg.INTERNAL_IFACES)}", flush=True)
+        print(f"[portal] restored {len(banned_macs)} ban(s), "
+              f"{sessions_restored} active session(s) "
+              f"(DNS intercept: "
+              f"{'on' if cfg.DNS_INTERCEPT else 'off'})", flush=True)
 
         threading.Thread(target=periodic_session_expiry, daemon=True).start()
         threading.Thread(target=periodic_connected_check, daemon=True).start()

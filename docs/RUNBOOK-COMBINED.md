@@ -120,9 +120,6 @@ or phone). Replace `/tmp/rules.bak` with the rollback you actually want.
 ## 5. Start the gateway
 
 ```bash
-# the port-80 redirect listener needs INPUT open (the code does NOT add this)
-sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-
 sudo ZTA_PORTAL_GATE=1 \
      ZTA_INTERNAL_IFACES=eth1 \
      ZTA_UPLINK_IFACE=eth0 \
@@ -130,12 +127,20 @@ sudo ZTA_PORTAL_GATE=1 \
      venv/bin/python run.py
 ```
 
+You no longer need to hand-add `iptables -I INPUT -p tcp --dport 80 -j ACCEPT`:
+`setup_gate()` now builds a `ZTA_INPUT` chain that accepts the redirect (80),
+the web UI (5000), DNS (53) and DHCP (67) on the internal interfaces, and opens
+DNS interception in `nat` (see §6). Set `ZTA_DNS_INTERCEPT=0` to disable DNS
+interception.
+
 Expected startup banner:
 
 ```
 [enforcement] iptables DROP active (Linux, root)
+[mail] LAB MODE (no MAIL_SERVER configured)
 [sniffer] listening on eth1
 [portal] gate ON, interfaces: eth1
+[portal] restored 0 ban(s), 0 active session(s) (DNS intercept: on)
 [portal] redirect listener on :80 -> http://192.168.50.1:5000/login
  * Running on http://0.0.0.0:5000
 ```
@@ -143,20 +148,33 @@ Expected startup banner:
 - `recorded-only mode` instead of `iptables DROP active` → not root, or `ZTA_ENFORCE`
   is exported weirdly (`unset ZTA_ENFORCE`).
 - No `[portal]` lines → `ZTA_PORTAL_GATE=1` was not exported.
+- `[mail]` shows `SMTP ready` once Flask-Mail is installed and `.env` is set;
+  otherwise it shows `LAB MODE` and links print to this terminal.
 
 ---
 
 ## 6. Verify the rules (second terminal)
 
 ```bash
-sudo iptables -t nat -S ZTA_PREROUTING   # a DNAT … --dport 80 for eth1
+sudo ./deploy/verify_gate.sh            # all-in-one: PASS/FAIL for every check
+# or by hand:
+sudo iptables -t nat -S ZTA_PREROUTING   # DNAT :80 + udp/tcp :53 (DNS intercept)
 sudo iptables -S ZTA_FORWARD             # order: DROP(ban) → ACCEPT(grant) → DROP(default)
+sudo iptables -S ZTA_INPUT               # ACCEPT 53/67/80/5000 + ESTABLISHED
 sudo ss -lntp | grep ':80'               # the redirect listener is up
-sudo iptables -S INPUT | grep 'dport 80' # the INPUT ACCEPT from §5
 ```
 
 Rule order matters: the catch-all `DROP` **must be last** or granted devices get
 no internet (this was a real bug, fixed on this branch).
+
+**DNS interception.** `ZTA_DNS_INTERCEPT=1` (default) rewrites every outbound
+`udp/tcp 53` query from a client to `192.168.50.1:53`, so a signed-out device can
+still resolve names through the gateway's dnsmasq (and cannot reach an outside
+resolver, which also blocks DNS tunnelling). Signed-in devices are intercepted
+too, so their lookups still show up in the Website Activity page. Limits:
+DNS-over-HTTPS and DNS-over-TLS are not affected — signed-out devices cannot use
+them because everything else is dropped, but signed-in devices can, which hides
+those lookups from the monitor.
 
 ---
 
@@ -208,7 +226,6 @@ This sets up `hostapd` + dnsmasq on `wlan0` and adds the NAT/forwarding rules.
 Then start with the Wi-Fi interface:
 
 ```bash
-sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo ZTA_PORTAL_GATE=1 ZTA_INTERNAL_IFACES=wlan0 ZTA_UPLINK_IFACE=eth0 \
      venv/bin/python run.py
 ```
@@ -217,12 +234,42 @@ Device joins SSID **ZTA-Gateway** and follows the same §7 flow.
 
 ---
 
-## 9. Teardown
+## 9. Boot persistence (optional)
+
+Instead of re-typing §3, run it once and let systemd do it on every boot:
+
+```bash
+sudo cp deploy/zta.env.example /etc/zta.env      # edit the interface names if needed
+sudo ./deploy/gateway-up.sh                      # forwarding, NAT, dnsmasq drop-in
+
+sudo cp deploy/zta-gateway.service /etc/systemd/system/
+sudo sed -i "s#/opt/zta-gateway#$PWD#g" /etc/systemd/system/zta-gateway.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now zta-gateway
+sudo ./deploy/verify_gate.sh
+```
+
+`gateway-up.sh` is idempotent and runs as `ExecStartPre`, so a reboot brings the
+whole gate back without any hand-typed rules. Secrets stay in the repo's `.env`
+(`chmod 600`); `/etc/zta.env` holds only non-secret switches.
+
+> Save a real backup outside `/tmp` (it is wiped at reboot):
+> `sudo mkdir -p /root/zta-backups && sudo iptables-save | sudo tee /root/zta-backups/rules-$(date +%F-%H%M).v4`
+
+---
+
+## 10. Teardown
 
 ```bash
 # stop run.py (Ctrl-C), then kill the safety job if still pending and restore:
 sudo iptables-restore < /tmp/rules.bak
+
+# if you installed the systemd unit:
+sudo systemctl disable --now zta-gateway
 ```
+
+`run.py`'s `teardown_gate()` (on clean shutdown) removes the `ZTA_FORWARD`,
+`ZTA_PREROUTING` and `ZTA_INPUT` chains and their jumps.
 
 ---
 
@@ -230,7 +277,8 @@ sudo iptables-restore < /tmp/rules.bak
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Device gets `192.168.50.x` but no redirect | gate off / wrong branch / no INPUT :80 | `ZTA_PORTAL_GATE=1`; confirm `[portal]` banner; `iptables -I INPUT -p tcp --dport 80 -j ACCEPT` |
+| Device gets `192.168.50.x` but no redirect | gate off / wrong branch | `ZTA_PORTAL_GATE=1`; confirm the `[portal]` banner and `sudo iptables -S ZTA_INPUT` |
+| Device gets no DNS / names don't resolve when signed out | dnsmasq down, or DNS interception off | `systemctl status dnsmasq`; `sudo iptables -t nat -S ZTA_PREROUTING \| grep 53`; `ZTA_DNS_INTERCEPT=1` |
 | No DHCP lease at all (169.254.x.x) | dnsmasq not serving `eth1` | §3b; check `interface=eth1` + `bind-interfaces`, no stale `zta-ap.conf` |
 | Portal page loads but sign-in doesn't grant internet | catch-all DROP above the ACCEPT | must be fixed on this branch; verify `iptables -S ZTA_FORWARD` order |
 | No "Sign in" OS popup, but manual URL works | client used HTTPS first, or OS probe path unmatched | try `http://neverssl.com`; probes answer `/generate_204`, `/connecttest.txt`, `/hotspot-detect.html` |

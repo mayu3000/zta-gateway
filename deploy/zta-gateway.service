@@ -1,0 +1,32 @@
+# systemd unit for the ZTA Gateway (plan F6).
+#
+# Install (adjust the path to your checkout first):
+#   sudo cp deploy/zta-gateway.service /etc/systemd/system/
+#   sudo sed -i 's#/opt/zta-gateway#/home/kali/zta-gateway#g' \
+#       /etc/systemd/system/zta-gateway.service
+#   sudo cp deploy/zta.env.example /etc/zta.env      # then edit it
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now zta-gateway
+#   sudo ./deploy/verify_gate.sh
+#
+# Secrets (MAIL_PASSWORD etc.) do NOT belong here — they live in the repo's
+# .env (chmod 600). /etc/zta.env holds only non-secret switches.
+[Unit]
+Description=ZTA Gateway (captive portal + device monitoring)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Change this path (and the two below) to match your checkout.
+WorkingDirectory=/opt/zta-gateway
+EnvironmentFile=/etc/zta.env
+ExecStartPre=/opt/zta-gateway/deploy/gateway-up.sh
+ExecStart=/opt/zta-gateway/venv/bin/python run.py
+Restart=on-failure
+RestartSec=5
+# The portal needs raw sockets and iptables; keep it as root for the demo.
+User=root
+
+[Install]
+WantedBy=multi-user.target

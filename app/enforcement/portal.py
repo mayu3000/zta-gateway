@@ -45,6 +45,7 @@ def _enabled():
 
 FORWARD_CHAIN = "ZTA_FORWARD"
 NAT_CHAIN = "ZTA_PREROUTING"
+INPUT_CHAIN = "ZTA_INPUT"
 
 
 def _ensure_forward_chain():
@@ -67,6 +68,33 @@ def _ensure_nat_chain():
     ok, _ = _run(["iptables", "-t", "nat", "-C", "PREROUTING", "-j", NAT_CHAIN])
     if not ok:
         _run(["iptables", "-t", "nat", "-I", "PREROUTING", "1", "-j", NAT_CHAIN])
+
+
+def _ensure_input_chain():
+    """Create ZTA_INPUT, accept the gateway's own services, jump from INPUT.
+
+    The redirect listener (tcp/80), the web UI (tcp/5000), the local resolver
+    (udp+tcp/53) and DHCP (udp/67) must stay reachable on the internal
+    interfaces. Doing it in code means the operator no longer has to hand-add
+    ``iptables -I INPUT -p tcp --dport 80 -j ACCEPT`` after every start (and
+    have it survive a restart). The chain is flushed and rebuilt; the INPUT
+    policy itself is never changed.
+    """
+    _run(["iptables", "-N", INPUT_CHAIN])
+    _run(["iptables", "-F", INPUT_CHAIN])
+    for iface in cfg.INTERNAL_IFACES:
+        for spec in (["-p", "udp", "--dport", "53"],
+                     ["-p", "tcp", "--dport", "53"],
+                     ["-p", "udp", "--dport", "67"],
+                     ["-p", "tcp", "--dport", "80"],
+                     ["-p", "tcp", "--dport", "5000"]):
+            _run(["iptables", "-A", INPUT_CHAIN, "-i", iface, *spec,
+                  "-j", "ACCEPT"])
+        _run(["iptables", "-A", INPUT_CHAIN, "-i", iface,
+              "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"])
+    ok, _ = _run(["iptables", "-C", "INPUT", "-j", INPUT_CHAIN])
+    if not ok:
+        _run(["iptables", "-I", "INPUT", "1", "-j", INPUT_CHAIN])
 
 
 def _ensure_default_drops():
@@ -95,12 +123,17 @@ def setup_gate():
     In nat ZTA_PREROUTING per interface:
       1. Granted MACs RETURN (skip redirect)
       2. Everything else DNAT tcp/80 to gateway:80
+      3. DNS (udp/tcp 53) DNAT to gateway:53 when ZTA_DNS_INTERCEPT=1
+
+    Services on the gateway itself (redirect tcp/80, web UI tcp/5000, local
+    resolver udp+tcp/53, DHCP udp/67) are accepted in ZTA_INPUT.
     """
     if not _enabled():
         return
 
     _ensure_forward_chain()
     _ensure_nat_chain()
+    _ensure_input_chain()
 
     # --- FORWARD chain ---
     # Order per interface is: banned DROP  >  granted ACCEPT  >  default DROP.
@@ -116,8 +149,26 @@ def setup_gate():
               "-i", iface, "-p", "tcp", "--dport", "80",
               "-j", "DNAT", "--to-dest", f"{cfg.GATEWAY_INTERNAL_IP}:80"])
 
+    # DNS interception: whatever resolver a client tries, the query is sent to
+    # the gateway's own dnsmasq. This replaces hand-added port-53 FORWARD rules
+    # and works for signed-out clients, which have everything else dropped.
+    if cfg.DNS_INTERCEPT:
+        gw = cfg.GATEWAY_INTERNAL_IP
+        for iface in cfg.INTERNAL_IFACES:
+            for proto in ("udp", "tcp"):
+                # Leave traffic already aimed at the gateway alone.
+                _run(["iptables", "-t", "nat", "-A", NAT_CHAIN,
+                      "-i", iface, "-p", proto, "--dport", "53",
+                      "-d", gw, "-j", "RETURN"])
+                _run(["iptables", "-t", "nat", "-A", NAT_CHAIN,
+                      "-i", iface, "-p", proto, "--dport", "53",
+                      "-j", "DNAT", "--to-dest", f"{gw}:53"])
+
     log.info("[portal] gate ON, interfaces: %s",
              ",".join(cfg.INTERNAL_IFACES))
+    if cfg.DNS_INTERCEPT:
+        log.info("[portal] DNS interception ON -> %s:53",
+                 cfg.GATEWAY_INTERNAL_IP)
 
 
 def teardown_gate():
@@ -129,11 +180,15 @@ def teardown_gate():
     _run(["iptables", "-D", "FORWARD", "-j", FORWARD_CHAIN])
     # Remove jump from PREROUTING
     _run(["iptables", "-t", "nat", "-D", "PREROUTING", "-j", NAT_CHAIN])
+    # Remove jump from INPUT
+    _run(["iptables", "-D", "INPUT", "-j", INPUT_CHAIN])
     # Flush and delete chains
     _run(["iptables", "-F", FORWARD_CHAIN])
     _run(["iptables", "-X", FORWARD_CHAIN])
     _run(["iptables", "-t", "nat", "-F", NAT_CHAIN])
     _run(["iptables", "-t", "nat", "-X", NAT_CHAIN])
+    _run(["iptables", "-F", INPUT_CHAIN])
+    _run(["iptables", "-X", INPUT_CHAIN])
 
 
 # --- grant / revoke -----------------------------------------------------------
